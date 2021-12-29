@@ -18,7 +18,7 @@ server_socket.listen()
 
 sockets_list = [server_socket]
 # uname -> addr: (IP, PORT)
-clients: dict[str, socket._RetAddress] = {}
+clients: dict[str, tuple[str, int]] = {}
 
 
 def receive_msg(client_socket: socket.socket) -> dict[str, str | bytes]:
