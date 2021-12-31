@@ -7,11 +7,11 @@ A lightweight file-sharing and messaging platform inspired by DC++
 ```sh
 python3.10 -m pip install --user pipenv
 ```
-* Install the project's dependencies by running 
+* Install the project's dependencies by running
 ```sh
 pipenv install
 ```
-* Setup `pre-commit` by running 
+* Setup `pre-commit` by running
 ```sh
 pre-commit install
 ```
@@ -19,3 +19,11 @@ pre-commit install
 ```sh
 pipenv run python server.py
 ```
+
+# Docker Commands
+```sh
+docker-compose run server bash
+
+docker-compose run client bash
+```
+Then run python file.py in the interactive shells

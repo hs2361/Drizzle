@@ -1,0 +1,25 @@
+services:
+  server:
+    build:
+      context: ./src/
+      dockerfile: server.dockerfile
+    ports:
+      - "1234:1234"
+    networks:
+      - lan
+  client:
+    build:
+      context: ./src/
+      dockerfile: client.dockerfile
+    ports:
+      - "1234:1234"
+      - "4321:4321"
+    networks:
+      - lan
+    stdin_open: true # docker run -i
+    tty: true        # docker run -t
+
+networks:
+  lan:
+    name: lan
+    driver: bridge

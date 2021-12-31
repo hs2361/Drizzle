@@ -8,13 +8,14 @@ import msgpack
 
 from exceptions import ExceptionCode, RequestException
 
-logging.basicConfig(filename="./server.log", level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG)
 HEADER_TYPE_LEN = 1
 HEADER_MSG_LEN = 7
-IP = "127.0.0.1"
+IP = socket.gethostbyname(socket.gethostname())
 PORT = 1234
 FMT = "utf-8"
 
+print(f"SERVER IP: {IP}")
 
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
