@@ -2,7 +2,6 @@ import logging
 import select
 import socket
 import sys
-import threading
 
 import msgpack
 
@@ -21,7 +20,7 @@ server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
 server_socket.bind((IP, PORT))
-server_socket.listen()
+server_socket.listen(5)
 
 sockets_list = [server_socket]
 # uname -> addr: (IP, PORT)
@@ -35,32 +34,36 @@ def receive_msg(client_socket: socket.socket) -> dict[str, str | bytes]:
             msg=f"Client at {client_socket.getpeername()} closed the connection",
             code=ExceptionCode.DISCONNECT,
         )
-    elif message_type not in ("n", "r"):
+    elif message_type not in ("n", "r", "l"):
+        logging.error(f"Received message type {message_type}")
         raise RequestException(
             msg="Invalid message type in header",
             code=ExceptionCode.INVALID_HEADER,
         )
     else:
         message_len = int(client_socket.recv(HEADER_MSG_LEN).decode(FMT))
-        return {"type": message_type, "uname": client_socket.recv(message_len)}
+        query = client_socket.recv(message_len)
+        logging.debug(f"Received packet: TYPE {message_type} QUERY {query}")
+        return {"type": message_type, "query": query}
 
 
 def read_handler(notified_socket: socket.socket) -> None:
     global clients
     global sockets_list
+    logging.info(f"CLIENTS {clients}")
     if notified_socket == server_socket:
         client_socket, client_addr = server_socket.accept()
         try:
             userdata = receive_msg(client_socket)
             if userdata["type"] == "n":
                 sockets_list.append(client_socket)
-                clients[userdata["uname"]] = client_addr
+                clients[userdata["query"].decode(FMT)] = client_addr
                 logging.log(
                     level=logging.DEBUG,
                     msg=(
                         "Accepted new connection from"
                         f" {client_addr[0]}:{client_addr[1]}"
-                        f" username: {userdata['uname'].decode(FMT)}"
+                        f" username: {userdata['query'].decode(FMT)}"
                     ),
                 )
             else:
@@ -81,7 +84,7 @@ def read_handler(notified_socket: socket.socket) -> None:
         try:
             request = receive_msg(notified_socket)
             if request["type"] == "r":
-                response_data = clients.get(request["uname"])
+                response_data = clients.get(request["query"].decode(FMT))
                 if response_data is not None:
                     logging.log(
                         level=logging.DEBUG,
@@ -92,7 +95,22 @@ def read_handler(notified_socket: socket.socket) -> None:
                     notified_socket.send(header + data)
                 else:
                     raise RequestException(
-                        msg=f"Username {request['uname'].decode(FMT)} not found",
+                        msg=f"Username {request['query'].decode(FMT)} not found",
+                        code=ExceptionCode.NOT_FOUND,
+                    )
+            elif request["type"] == "l":
+                lookup_addr = request["query"].decode(FMT)
+                for key, value in clients.items():
+                    if value[0] == lookup_addr:
+                        username = key.encode(FMT)
+                        header = f"l{len(username):<{HEADER_MSG_LEN}}".encode(
+                            FMT
+                        )
+                        notified_socket.send(header + username)
+                        break
+                else:
+                    raise RequestException(
+                        msg=f"Username for {lookup_addr} not found",
                         code=ExceptionCode.NOT_FOUND,
                     )
             else:
@@ -107,10 +125,10 @@ def read_handler(notified_socket: socket.socket) -> None:
             if e.code == ExceptionCode.DISCONNECT:
                 try:
                     sockets_list.remove(notified_socket)
-                    for uname, addr in clients.items():
-                        if addr == notified_socket.getpeername():
-                            del clients[uname]
-                            break
+                    # for uname, addr in clients.items():
+                    #     if addr == notified_socket.getpeername():
+                    #         del clients[uname]
+                    #         break
                 except ValueError:
                     logging.info("already removed")
             else:
@@ -118,6 +136,9 @@ def read_handler(notified_socket: socket.socket) -> None:
                     e, default=RequestException.to_dict, use_bin_type=True
                 )
                 header = f"e{len(data):<{HEADER_MSG_LEN}}".encode(FMT)
+                # data = notified_socket.recv(1024)
+                # while data:
+                #     data = notified_socket.recv(1024)
                 notified_socket.send(header + data)
             logging.log(level=logging.ERROR, msg=f"Exception: {e.msg}")
             return
@@ -132,8 +153,9 @@ while True:
     )
     for notified_socket in read_sockets:
         # threads
-        thread = threading.Thread(target=read_handler, args=(notified_socket,))
-        thread.start()
+        # thread = threading.Thread(target=read_handler, args=(notified_socket,))
+        # thread.run()
+        read_handler(notified_socket)
 
     # for notified_socket in exception_sockets:
     #     sockets_list.remove(notified_socket)
