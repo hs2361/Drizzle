@@ -6,7 +6,9 @@ import msgpack
 
 from exceptions import ExceptionCode, RequestException
 
-logging.basicConfig(level=logging.DEBUG)
+# from prompt_toolkit.patch_stdout import patch_stdout
+# from prompt_toolkit.shortcuts import PromptSession
+
 
 HEADER_TYPE_LEN = 1
 HEADER_MSG_LEN = 7
@@ -19,6 +21,11 @@ CLIENT_SEND_PORT = 5678
 CLIENT_RECV_PORT = 4321
 
 my_username = input("Enter username: ")
+
+logging.basicConfig(
+    filename=f"/logs/client_{my_username}_{CLIENT_IP}.log", level=logging.DEBUG
+)
+
 client_send_socket = socket.socket(
     socket.AF_INET, socket.SOCK_STREAM
 )  # to connect to main server
@@ -31,22 +38,21 @@ client_send_socket.bind((CLIENT_IP, CLIENT_SEND_PORT))
 client_recv_socket.bind((CLIENT_IP, CLIENT_RECV_PORT))
 client_send_socket.connect((SERVER_IP, SERVER_PORT))
 client_recv_socket.listen(5)
-# client_socket.setblocking(False)
 
 username = my_username.encode(FMT)
 username_header = f"n{len(username):<{HEADER_MSG_LEN}}".encode(FMT)
 client_send_socket.send(username_header + username)
 
-receiving = False
 
 connected = [client_recv_socket]
+# receiving = False
 
 
 def send_handler():
     global client_send_socket
+    # global receiving
     # while True:
-    # if not receiving:
-    recipient = input("Enter recipient's username: ")
+    recipient = input("\nEnter recipient's username: ")
     if recipient:
         recipient = recipient.encode(FMT)
         request_header = f"r{len(recipient):<{HEADER_MSG_LEN}}".encode(FMT)
@@ -59,18 +65,20 @@ def send_handler():
         )
         response = client_send_socket.recv(response_length)
         if res_type == "r":
-            recipient_addr = msgpack.unpackb(response, use_list=False)
+            recipient_addr: str = response.decode(FMT)
             logging.log(level=logging.DEBUG, msg=f"Response: {recipient_addr}")
             # client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            client_send_socket.close()
-            client_send_socket = socket.socket(
+            client_peer_socket = socket.socket(
                 socket.AF_INET, socket.SOCK_STREAM
             )
-            # client_send_socket.bind((CLIENT_IP, CLIENT_SEND_PORT))
-            client_send_socket.connect((recipient_addr[0], 4321))
-            msg = "Test messsage".encode(FMT)
-            header = f"m{len(msg):<{HEADER_MSG_LEN}}".encode(FMT)
-            client_send_socket.send(header + msg)
+            client_peer_socket.connect((recipient_addr, CLIENT_RECV_PORT))
+            while True:
+                msg = input(f"\nEnter message for {recipient.decode(FMT)}: ")
+                msg = msg.encode(FMT)
+                if msg == b"exit":
+                    break
+                header = f"m{len(msg):<{HEADER_MSG_LEN}}".encode(FMT)
+                client_peer_socket.send(header + msg)
         if res_type == "e":
             err: RequestException = msgpack.unpackb(
                 response,
@@ -101,9 +109,10 @@ def receive_handler():
     global client_send_socket
     global client_recv_socket
     global username
+    # global receiving
 
     # while True:
-    read_sockets, _, __ = select.select(connected, [], [])
+    read_sockets, _, __ = select.select(connected, [], [], 0.1)
     for notified_socket in read_sockets:
         if notified_socket == client_recv_socket:
             peer_socket, peer_addr = client_recv_socket.accept()
@@ -114,6 +123,7 @@ def receive_handler():
                     f" {peer_addr[0]}:{peer_addr[1]}"
                 ),
             )
+            # receiving = True
             try:
                 connected.append(peer_socket)
                 lookup: bytes = peer_addr[0].encode(FMT)
@@ -135,9 +145,7 @@ def receive_handler():
                     response = client_send_socket.recv(response_length)
                     if res_type == "l":
                         username = response.decode(FMT)
-                        logging.info(
-                            f"Username {username} is trying to send a message"
-                        )
+                        print(f"User {username} is trying to send a message")
                     else:
                         exception = msgpack.unpackb(
                             response,
@@ -148,11 +156,11 @@ def receive_handler():
                         raise exception
             except RequestException as e:
                 logging.log(level=logging.ERROR, msg=e)
-                return
+                break
         else:
             try:
                 msg: str = receive_msg(notified_socket)
-                logging.info(f"Received message {msg} from {username}")
+                print(f"{username} says: {msg}")
             except RequestException as e:
                 if e.code == ExceptionCode.DISCONNECT:
                     try:
@@ -160,7 +168,8 @@ def receive_handler():
                     except ValueError:
                         logging.info("already removed")
                 logging.log(level=logging.ERROR, msg=f"Exception: {e.msg}")
-                return
+                break
+        # receiving = False
 
 
 # send_thread = threading.Thread(target=send_handler)
@@ -168,30 +177,29 @@ def receive_handler():
 # send_thread.start()
 # receive_thread.start()
 
-while True:
-    send_handler()
-    receive_handler()
 
+def client_loop():
+    while True:
+        send_handler()
+        receive_handler()
+
+
+client_loop()
+
+# with patch_stdout():
+# while True:
+# background_task = asyncio.create_task(receive_handler())
 # try:
-#     while True:
-#         # receive things
-#         username_header = client_socket.recv(HEADER_MSG_LEN)
-#         if not len(username_header):
-#             print("Connection closed by server")
-#             sys.exit()
-#         username_len = int(username_header.decode(FMT).strip())
-#         username = client_socket.recv(username_len)
-#         request_header = client_socket.recv(HEADER_MSG_LEN)
-#         message_length = int(request_header.decode(FMT).strip())
-#         recipient = client_socket.recv(message_length).decode(FMT)
-#         print(f"{username} > {recipient}")
+# if not receiving:
+# await send_handler()
+# finally:
+# background_task.cancel()
+# receiving = receive_handler()
 
-# except IOError as e:
-#     if e.errno != errno.EAGAIN and e.errno != errno.EWOULDBLOCK:
-#         print("Could not parse input: ", str(e))
-#         sys.exit()
-#     continue
-
-# except Exception as e:
-#     print("An error occured: ", str(e))
-#     sys.exit()
+# if __name__ == "__main__":
+#     try:
+#         from asyncio import run
+#     except ImportError:
+#         asyncio.run_until_complete(client_loop())
+#     else:
+#         asyncio.run(client_loop())

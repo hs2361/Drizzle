@@ -7,12 +7,20 @@ import msgpack
 
 from exceptions import ExceptionCode, RequestException
 
-logging.basicConfig(level=logging.DEBUG)
 HEADER_TYPE_LEN = 1
 HEADER_MSG_LEN = 7
 IP = socket.gethostbyname(socket.gethostname())
 PORT = 1234
 FMT = "utf-8"
+
+logging.basicConfig(
+    # filename=f"/logs/server_{IP}.log",
+    level=logging.DEBUG,
+    handlers=[
+        logging.FileHandler(f"/logs/server_{IP}.log"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
 
 print(f"SERVER IP: {IP}")
 
@@ -24,7 +32,7 @@ server_socket.listen(5)
 
 sockets_list = [server_socket]
 # uname -> addr: (IP, PORT)
-clients: dict[str, tuple[str, int]] = {}
+clients: dict[str, str] = {}
 
 
 def receive_msg(client_socket: socket.socket) -> dict[str, str | bytes]:
@@ -56,8 +64,9 @@ def read_handler(notified_socket: socket.socket) -> None:
         try:
             userdata = receive_msg(client_socket)
             if userdata["type"] == "n":
+                # [TODO]: Add check for unique uname
                 sockets_list.append(client_socket)
-                clients[userdata["query"].decode(FMT)] = client_addr
+                clients[userdata["query"].decode(FMT)] = client_addr[0]
                 logging.log(
                     level=logging.DEBUG,
                     msg=(
@@ -90,7 +99,7 @@ def read_handler(notified_socket: socket.socket) -> None:
                         level=logging.DEBUG,
                         msg=f"Valid request: {response_data}",
                     )
-                    data: bytes = msgpack.packb(response_data)
+                    data: bytes = response_data.encode(FMT)
                     header = f"r{len(data):<{HEADER_MSG_LEN}}".encode(FMT)
                     notified_socket.send(header + data)
                 else:
@@ -101,7 +110,7 @@ def read_handler(notified_socket: socket.socket) -> None:
             elif request["type"] == "l":
                 lookup_addr = request["query"].decode(FMT)
                 for key, value in clients.items():
-                    if value[0] == lookup_addr:
+                    if value == lookup_addr:
                         username = key.encode(FMT)
                         header = f"l{len(username):<{HEADER_MSG_LEN}}".encode(
                             FMT
@@ -125,10 +134,6 @@ def read_handler(notified_socket: socket.socket) -> None:
             if e.code == ExceptionCode.DISCONNECT:
                 try:
                     sockets_list.remove(notified_socket)
-                    # for uname, addr in clients.items():
-                    #     if addr == notified_socket.getpeername():
-                    #         del clients[uname]
-                    #         break
                 except ValueError:
                     logging.info("already removed")
             else:
@@ -136,9 +141,6 @@ def read_handler(notified_socket: socket.socket) -> None:
                     e, default=RequestException.to_dict, use_bin_type=True
                 )
                 header = f"e{len(data):<{HEADER_MSG_LEN}}".encode(FMT)
-                # data = notified_socket.recv(1024)
-                # while data:
-                #     data = notified_socket.recv(1024)
                 notified_socket.send(header + data)
             logging.log(level=logging.ERROR, msg=f"Exception: {e.msg}")
             return
@@ -156,10 +158,3 @@ while True:
         # thread = threading.Thread(target=read_handler, args=(notified_socket,))
         # thread.run()
         read_handler(notified_socket)
-
-    # for notified_socket in exception_sockets:
-    #     sockets_list.remove(notified_socket)
-    #     for uname, addr in clients.items():
-    #         if addr == notified_socket.getpeername():
-    #             del clients[uname]
-    #             break

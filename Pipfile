@@ -5,6 +5,7 @@ name = "pypi"
 
 [packages]
 msgpack = "*"
+prompt-toolkit = "*"
 
 [dev-packages]
 pre-commit = "*"
