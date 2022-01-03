@@ -1,14 +1,13 @@
 import logging
 import select
 import socket
+import threading
 
 import msgpack
+from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.shortcuts import PromptSession
 
 from exceptions import ExceptionCode, RequestException
-
-# from prompt_toolkit.patch_stdout import patch_stdout
-# from prompt_toolkit.shortcuts import PromptSession
-
 
 HEADER_TYPE_LEN = 1
 HEADER_MSG_LEN = 7
@@ -51,41 +50,56 @@ connected = [client_recv_socket]
 def send_handler():
     global client_send_socket
     # global receiving
-    # while True:
-    recipient = input("\nEnter recipient's username: ")
-    if recipient:
-        recipient = recipient.encode(FMT)
-        request_header = f"r{len(recipient):<{HEADER_MSG_LEN}}".encode(FMT)
-        logging.debug(f"Sent packet {(request_header + recipient).decode(FMT)}")
-        client_send_socket.send(request_header + recipient)
-        res_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
-        logging.log(level=logging.DEBUG, msg=f"Response type: {res_type}")
-        response_length = int(
-            client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip()
-        )
-        response = client_send_socket.recv(response_length)
-        if res_type == "r":
-            recipient_addr: str = response.decode(FMT)
-            logging.log(level=logging.DEBUG, msg=f"Response: {recipient_addr}")
-            # client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            client_peer_socket = socket.socket(
-                socket.AF_INET, socket.SOCK_STREAM
-            )
-            client_peer_socket.connect((recipient_addr, CLIENT_RECV_PORT))
-            while True:
-                msg = input(f"\nEnter message for {recipient.decode(FMT)}: ")
-                msg = msg.encode(FMT)
-                if msg == b"exit":
-                    break
-                header = f"m{len(msg):<{HEADER_MSG_LEN}}".encode(FMT)
-                client_peer_socket.send(header + msg)
-        if res_type == "e":
-            err: RequestException = msgpack.unpackb(
-                response,
-                object_hook=RequestException.from_dict,
-                raw=False,
-            )
-            logging.log(level=logging.ERROR, msg=err)
+    with patch_stdout():
+        recipient_prompt = PromptSession("\nEnter recipient's username: ")
+        while True:
+            recipient = recipient_prompt.prompt()
+            if recipient:
+                recipient = recipient.encode(FMT)
+                request_header = f"r{len(recipient):<{HEADER_MSG_LEN}}".encode(
+                    FMT
+                )
+                logging.debug(
+                    f"Sent packet {(request_header + recipient).decode(FMT)}"
+                )
+                client_send_socket.send(request_header + recipient)
+                res_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
+                logging.log(
+                    level=logging.DEBUG, msg=f"Response type: {res_type}"
+                )
+                response_length = int(
+                    client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip()
+                )
+                response = client_send_socket.recv(response_length)
+                if res_type == "r":
+                    recipient_addr: str = response.decode(FMT)
+                    logging.log(
+                        level=logging.DEBUG, msg=f"Response: {recipient_addr}"
+                    )
+                    # client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    client_peer_socket = socket.socket(
+                        socket.AF_INET, socket.SOCK_STREAM
+                    )
+                    client_peer_socket.connect(
+                        (recipient_addr, CLIENT_RECV_PORT)
+                    )
+                    while True:
+                        msg_prompt = PromptSession(
+                            f"\nEnter message for {recipient.decode(FMT)}: "
+                        )
+                        msg = msg_prompt.prompt()
+                        msg = msg.encode(FMT)
+                        if msg == b"exit":
+                            break
+                        header = f"m{len(msg):<{HEADER_MSG_LEN}}".encode(FMT)
+                        client_peer_socket.send(header + msg)
+                if res_type == "e":
+                    err: RequestException = msgpack.unpackb(
+                        response,
+                        object_hook=RequestException.from_dict,
+                        raw=False,
+                    )
+                    logging.log(level=logging.ERROR, msg=err)
 
 
 def receive_msg(socket: socket.socket) -> str:
@@ -111,64 +125,70 @@ def receive_handler():
     global username
     # global receiving
 
-    # while True:
-    read_sockets, _, __ = select.select(connected, [], [], 0.1)
-    for notified_socket in read_sockets:
-        if notified_socket == client_recv_socket:
-            peer_socket, peer_addr = client_recv_socket.accept()
-            logging.log(
-                level=logging.DEBUG,
-                msg=(
-                    "Accepted new connection from"
-                    f" {peer_addr[0]}:{peer_addr[1]}"
-                ),
-            )
-            # receiving = True
-            try:
-                connected.append(peer_socket)
-                lookup: bytes = peer_addr[0].encode(FMT)
-                header = f"l{len(lookup):<{HEADER_MSG_LEN}}".encode(FMT)
-                logging.debug(f"Sending packet {(header + lookup).decode(FMT)}")
-                client_send_socket.send(header + lookup)
-                res_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
-                if res_type not in ["l", "e"]:
-                    raise RequestException(
-                        msg="Invalid message type in header",
-                        code=ExceptionCode.INVALID_HEADER,
+    while True:
+        read_sockets, _, __ = select.select(connected, [], [], 1)
+        for notified_socket in read_sockets:
+            if notified_socket == client_recv_socket:
+                peer_socket, peer_addr = client_recv_socket.accept()
+                logging.log(
+                    level=logging.DEBUG,
+                    msg=(
+                        "Accepted new connection from"
+                        f" {peer_addr[0]}:{peer_addr[1]}"
+                    ),
+                )
+                # receiving = True
+                try:
+                    connected.append(peer_socket)
+                    lookup: bytes = peer_addr[0].encode(FMT)
+                    header = f"l{len(lookup):<{HEADER_MSG_LEN}}".encode(FMT)
+                    logging.debug(
+                        f"Sending packet {(header + lookup).decode(FMT)}"
                     )
-                else:
-                    response_length = int(
-                        client_send_socket.recv(HEADER_MSG_LEN)
-                        .decode(FMT)
-                        .strip()
+                    client_send_socket.send(header + lookup)
+                    res_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(
+                        FMT
                     )
-                    response = client_send_socket.recv(response_length)
-                    if res_type == "l":
-                        username = response.decode(FMT)
-                        print(f"User {username} is trying to send a message")
-                    else:
-                        exception = msgpack.unpackb(
-                            response,
-                            object_hook=RequestException.from_dict,
-                            raw=False,
+                    if res_type not in ["l", "e"]:
+                        raise RequestException(
+                            msg="Invalid message type in header",
+                            code=ExceptionCode.INVALID_HEADER,
                         )
-                        logging.error(exception)
-                        raise exception
-            except RequestException as e:
-                logging.log(level=logging.ERROR, msg=e)
-                break
-        else:
-            try:
-                msg: str = receive_msg(notified_socket)
-                print(f"{username} says: {msg}")
-            except RequestException as e:
-                if e.code == ExceptionCode.DISCONNECT:
-                    try:
-                        connected.remove(notified_socket)
-                    except ValueError:
-                        logging.info("already removed")
-                logging.log(level=logging.ERROR, msg=f"Exception: {e.msg}")
-                break
+                    else:
+                        response_length = int(
+                            client_send_socket.recv(HEADER_MSG_LEN)
+                            .decode(FMT)
+                            .strip()
+                        )
+                        response = client_send_socket.recv(response_length)
+                        if res_type == "l":
+                            username = response.decode(FMT)
+                            print(
+                                f"User {username} is trying to send a message"
+                            )
+                        else:
+                            exception = msgpack.unpackb(
+                                response,
+                                object_hook=RequestException.from_dict,
+                                raw=False,
+                            )
+                            logging.error(exception)
+                            raise exception
+                except RequestException as e:
+                    logging.log(level=logging.ERROR, msg=e)
+                    break
+            else:
+                try:
+                    msg: str = receive_msg(notified_socket)
+                    print(f"{username} says: {msg}")
+                except RequestException as e:
+                    if e.code == ExceptionCode.DISCONNECT:
+                        try:
+                            connected.remove(notified_socket)
+                        except ValueError:
+                            logging.info("already removed")
+                    logging.log(level=logging.ERROR, msg=f"Exception: {e.msg}")
+                    break
         # receiving = False
 
 
@@ -178,13 +198,21 @@ def receive_handler():
 # receive_thread.start()
 
 
-def client_loop():
-    while True:
-        send_handler()
-        receive_handler()
+def main():
+    # while True:
+    send_thread = threading.Thread(target=send_handler)
+    receive_thread = threading.Thread(target=receive_handler)
+    send_thread.start()
+    receive_thread.start()
+    # receive_handler()
+    # send_handler()
 
 
-client_loop()
+# main()
+
+if __name__ == "__main__":
+    main()
+
 
 # with patch_stdout():
 # while True:
