@@ -1,6 +1,7 @@
 import logging
 import select
 import socket
+import sys
 import threading
 
 import msgpack
@@ -19,10 +20,8 @@ CLIENT_IP = socket.gethostbyname(socket.gethostname())
 CLIENT_SEND_PORT = 5678
 CLIENT_RECV_PORT = 4321
 
-my_username = input("Enter username: ")
-
 logging.basicConfig(
-    filename=f"/logs/client_{my_username}_{CLIENT_IP}.log", level=logging.DEBUG
+    filename=f"/logs/client_{CLIENT_IP}.log", level=logging.DEBUG
 )
 
 client_send_socket = socket.socket(
@@ -37,19 +36,20 @@ client_send_socket.bind((CLIENT_IP, CLIENT_SEND_PORT))
 client_recv_socket.bind((CLIENT_IP, CLIENT_RECV_PORT))
 client_send_socket.connect((SERVER_IP, SERVER_PORT))
 client_recv_socket.listen(5)
-
-username = my_username.encode(FMT)
-username_header = f"n{len(username):<{HEADER_MSG_LEN}}".encode(FMT)
-client_send_socket.send(username_header + username)
-
-
 connected = [client_recv_socket]
-# receiving = False
+
+
+def prompt_username() -> str:
+    my_username = input("Enter username: ")
+    username = my_username.encode(FMT)
+    username_header = f"n{len(username):<{HEADER_MSG_LEN}}".encode(FMT)
+    client_send_socket.send(username_header + username)
+    type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
+    return type
 
 
 def send_handler():
     global client_send_socket
-    # global receiving
     with patch_stdout():
         recipient_prompt = PromptSession("\nEnter recipient's username: ")
         while True:
@@ -76,7 +76,6 @@ def send_handler():
                     logging.log(
                         level=logging.DEBUG, msg=f"Response: {recipient_addr}"
                     )
-                    # client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     client_peer_socket = socket.socket(
                         socket.AF_INET, socket.SOCK_STREAM
                     )
@@ -89,7 +88,7 @@ def send_handler():
                         )
                         msg = msg_prompt.prompt()
                         msg = msg.encode(FMT)
-                        if msg == b"exit":
+                        if msg == b"!exit":
                             break
                         header = f"m{len(msg):<{HEADER_MSG_LEN}}".encode(FMT)
                         client_peer_socket.send(header + msg)
@@ -122,10 +121,10 @@ def receive_msg(socket: socket.socket) -> str:
 def receive_handler():
     global client_send_socket
     global client_recv_socket
-    global username
-    # global receiving
+    peers: dict[str, str] = {}
 
     while True:
+        read_sockets: list[socket.socket]
         read_sockets, _, __ = select.select(connected, [], [], 1)
         for notified_socket in read_sockets:
             if notified_socket == client_recv_socket:
@@ -137,7 +136,6 @@ def receive_handler():
                         f" {peer_addr[0]}:{peer_addr[1]}"
                     ),
                 )
-                # receiving = True
                 try:
                     connected.append(peer_socket)
                     lookup: bytes = peer_addr[0].encode(FMT)
@@ -166,6 +164,7 @@ def receive_handler():
                             print(
                                 f"User {username} is trying to send a message"
                             )
+                            peers[peer_addr[0]] = username
                         else:
                             exception = msgpack.unpackb(
                                 response,
@@ -180,6 +179,7 @@ def receive_handler():
             else:
                 try:
                     msg: str = receive_msg(notified_socket)
+                    username = peers[notified_socket.getpeername()[0]]
                     print(f"{username} says: {msg}")
                 except RequestException as e:
                     if e.code == ExceptionCode.DISCONNECT:
@@ -189,45 +189,29 @@ def receive_handler():
                             logging.info("already removed")
                     logging.log(level=logging.ERROR, msg=f"Exception: {e.msg}")
                     break
-        # receiving = False
 
 
-# send_thread = threading.Thread(target=send_handler)
-# receive_thread = threading.Thread(target=receive_handler)
-# send_thread.start()
-# receive_thread.start()
-
-
-def main():
-    # while True:
+if __name__ == "__main__":
+    while prompt_username() != "n":
+        error_len = int(
+            client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip()
+        )
+        error = client_send_socket.recv(error_len)
+        exception: RequestException = msgpack.unpackb(
+            error, object_hook=RequestException.from_dict, raw=False
+        )
+        if exception.code == ExceptionCode.USER_EXISTS:
+            logging.error(msg=exception.msg)
+            print("Sorry that username is taken, please choose another one")
+        else:
+            logging.fatal(msg=exception.msg)
+            print("Sorry something went wrong")
+            client_send_socket.close()
+            client_recv_socket.close()
+            sys.exit(1)
+    else:
+        print("Successfully registered")
     send_thread = threading.Thread(target=send_handler)
     receive_thread = threading.Thread(target=receive_handler)
     send_thread.start()
     receive_thread.start()
-    # receive_handler()
-    # send_handler()
-
-
-# main()
-
-if __name__ == "__main__":
-    main()
-
-
-# with patch_stdout():
-# while True:
-# background_task = asyncio.create_task(receive_handler())
-# try:
-# if not receiving:
-# await send_handler()
-# finally:
-# background_task.cancel()
-# receiving = receive_handler()
-
-# if __name__ == "__main__":
-#     try:
-#         from asyncio import run
-#     except ImportError:
-#         asyncio.run_until_complete(client_loop())
-#     else:
-#         asyncio.run(client_loop())

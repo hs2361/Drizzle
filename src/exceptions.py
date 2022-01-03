@@ -6,6 +6,7 @@ class ExceptionCode(Enum):
     INVALID_HEADER = 1
     BAD_REQUEST = 2
     NOT_FOUND = 4
+    USER_EXISTS = 5
 
 
 class RequestException(Exception):
