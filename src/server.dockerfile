@@ -5,7 +5,7 @@ EXPOSE 1234
 WORKDIR /Drizzle/src
 
 COPY ./server .
-COPY ./exceptions.py .
+COPY ./utils ./utils
 
 RUN pip install pipenv
 RUN pipenv install --system --deploy --ignore-pipfile

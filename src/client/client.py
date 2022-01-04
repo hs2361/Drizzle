@@ -1,5 +1,7 @@
 import logging
+import os
 import select
+import signal
 import socket
 import sys
 import threading
@@ -8,7 +10,8 @@ import msgpack
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import PromptSession
 
-from exceptions import ExceptionCode, RequestException
+from utils.exceptions import ExceptionCode, RequestException
+from utils.headers import HeaderCode
 
 HEADER_TYPE_LEN = 1
 HEADER_MSG_LEN = 7
@@ -42,40 +45,43 @@ connected = [client_recv_socket]
 def prompt_username() -> str:
     my_username = input("Enter username: ")
     username = my_username.encode(FMT)
-    username_header = f"n{len(username):<{HEADER_MSG_LEN}}".encode(FMT)
+    username_header = f"{HeaderCode.NEW_CONNECTION.value}{len(username):<{HEADER_MSG_LEN}}".encode(
+        FMT
+    )
     client_send_socket.send(username_header + username)
     type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
     return type
 
 
-def send_handler():
+def send_handler() -> None:
     global client_send_socket
     with patch_stdout():
         recipient_prompt = PromptSession("\nEnter recipient's username: ")
         while True:
             recipient = recipient_prompt.prompt()
+            if recipient == "!exit":
+                if os.name == "nt":
+                    os._exit()
+                else:
+                    os.kill(os.getpid(), signal.SIGINT)
             if recipient:
                 recipient = recipient.encode(FMT)
-                request_header = f"r{len(recipient):<{HEADER_MSG_LEN}}".encode(
+                request_header = f"{HeaderCode.REQUEST_UNAME.value}{len(recipient):<{HEADER_MSG_LEN}}".encode(
                     FMT
                 )
                 logging.debug(
-                    f"Sent packet {(request_header + recipient).decode(FMT)}"
+                    msg=f"Sent packet {(request_header + recipient).decode(FMT)}"
                 )
                 client_send_socket.send(request_header + recipient)
                 res_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
-                logging.log(
-                    level=logging.DEBUG, msg=f"Response type: {res_type}"
-                )
+                logging.debug(msg=f"Response type: {res_type}")
                 response_length = int(
                     client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip()
                 )
                 response = client_send_socket.recv(response_length)
-                if res_type == "r":
+                if res_type == HeaderCode.REQUEST_UNAME.value:
                     recipient_addr: str = response.decode(FMT)
-                    logging.log(
-                        level=logging.DEBUG, msg=f"Response: {recipient_addr}"
-                    )
+                    logging.debug(msg=f"Response: {recipient_addr}")
                     client_peer_socket = socket.socket(
                         socket.AF_INET, socket.SOCK_STREAM
                     )
@@ -87,18 +93,21 @@ def send_handler():
                             f"\nEnter message for {recipient.decode(FMT)}: "
                         )
                         msg = msg_prompt.prompt()
-                        msg = msg.encode(FMT)
-                        if msg == b"!exit":
-                            break
-                        header = f"m{len(msg):<{HEADER_MSG_LEN}}".encode(FMT)
-                        client_peer_socket.send(header + msg)
-                if res_type == "e":
+                        if len(msg):
+                            msg = msg.encode(FMT)
+                            if msg == b"!exit":
+                                break
+                            header = f"{HeaderCode.MESSAGE.value}{len(msg):<{HEADER_MSG_LEN}}".encode(
+                                FMT
+                            )
+                            client_peer_socket.send(header + msg)
+                if res_type == HeaderCode.ERROR.value:
                     err: RequestException = msgpack.unpackb(
                         response,
                         object_hook=RequestException.from_dict,
                         raw=False,
                     )
-                    logging.log(level=logging.ERROR, msg=err)
+                    logging.error(msg=err)
 
 
 def receive_msg(socket: socket.socket) -> str:
@@ -108,7 +117,7 @@ def receive_msg(socket: socket.socket) -> str:
             msg=f"Peer at {socket.getpeername()} closed the connection",
             code=ExceptionCode.DISCONNECT,
         )
-    elif message_type != "m":
+    elif message_type != HeaderCode.MESSAGE.value:
         raise RequestException(
             msg="Invalid message type in header",
             code=ExceptionCode.INVALID_HEADER,
@@ -118,7 +127,7 @@ def receive_msg(socket: socket.socket) -> str:
         return socket.recv(message_len).decode(FMT)
 
 
-def receive_handler():
+def receive_handler() -> None:
     global client_send_socket
     global client_recv_socket
     peers: dict[str, str] = {}
@@ -129,8 +138,7 @@ def receive_handler():
         for notified_socket in read_sockets:
             if notified_socket == client_recv_socket:
                 peer_socket, peer_addr = client_recv_socket.accept()
-                logging.log(
-                    level=logging.DEBUG,
+                logging.debug(
                     msg=(
                         "Accepted new connection from"
                         f" {peer_addr[0]}:{peer_addr[1]}"
@@ -139,15 +147,20 @@ def receive_handler():
                 try:
                     connected.append(peer_socket)
                     lookup: bytes = peer_addr[0].encode(FMT)
-                    header = f"l{len(lookup):<{HEADER_MSG_LEN}}".encode(FMT)
+                    header = f"{HeaderCode.LOOKUP_ADDRESS.value}{len(lookup):<{HEADER_MSG_LEN}}".encode(
+                        FMT
+                    )
                     logging.debug(
-                        f"Sending packet {(header + lookup).decode(FMT)}"
+                        msg=f"Sending packet {(header + lookup).decode(FMT)}"
                     )
                     client_send_socket.send(header + lookup)
                     res_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(
                         FMT
                     )
-                    if res_type not in ["l", "e"]:
+                    if res_type not in [
+                        HeaderCode.LOOKUP_ADDRESS.value,
+                        HeaderCode.ERROR.value,
+                    ]:
                         raise RequestException(
                             msg="Invalid message type in header",
                             code=ExceptionCode.INVALID_HEADER,
@@ -159,7 +172,7 @@ def receive_handler():
                             .strip()
                         )
                         response = client_send_socket.recv(response_length)
-                        if res_type == "l":
+                        if res_type == HeaderCode.LOOKUP_ADDRESS.value:
                             username = response.decode(FMT)
                             print(
                                 f"User {username} is trying to send a message"
@@ -171,10 +184,10 @@ def receive_handler():
                                 object_hook=RequestException.from_dict,
                                 raw=False,
                             )
-                            logging.error(exception)
+                            logging.error(msg=exception)
                             raise exception
                 except RequestException as e:
-                    logging.log(level=logging.ERROR, msg=e)
+                    logging.error(msg=e)
                     break
             else:
                 try:
@@ -187,31 +200,42 @@ def receive_handler():
                             connected.remove(notified_socket)
                         except ValueError:
                             logging.info("already removed")
-                    logging.log(level=logging.ERROR, msg=f"Exception: {e.msg}")
+                    logging.error(msg=f"Exception: {e.msg}")
                     break
 
 
+def excepthook(args: threading.ExceptHookArgs):
+    logging.fatal(msg=args)
+
+
 if __name__ == "__main__":
-    while prompt_username() != "n":
-        error_len = int(
-            client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip()
-        )
-        error = client_send_socket.recv(error_len)
-        exception: RequestException = msgpack.unpackb(
-            error, object_hook=RequestException.from_dict, raw=False
-        )
-        if exception.code == ExceptionCode.USER_EXISTS:
-            logging.error(msg=exception.msg)
-            print("Sorry that username is taken, please choose another one")
+    try:
+        while prompt_username() != HeaderCode.NEW_CONNECTION.value:
+            error_len = int(
+                client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip()
+            )
+            error = client_send_socket.recv(error_len)
+            exception: RequestException = msgpack.unpackb(
+                error, object_hook=RequestException.from_dict, raw=False
+            )
+            if exception.code == ExceptionCode.USER_EXISTS:
+                logging.error(msg=exception.msg)
+                print("Sorry that username is taken, please choose another one")
+            else:
+                logging.fatal(msg=exception.msg)
+                print("Sorry something went wrong")
+                client_send_socket.close()
+                client_recv_socket.close()
+                sys.exit(1)
         else:
-            logging.fatal(msg=exception.msg)
-            print("Sorry something went wrong")
-            client_send_socket.close()
-            client_recv_socket.close()
-            sys.exit(1)
-    else:
-        print("Successfully registered")
-    send_thread = threading.Thread(target=send_handler)
-    receive_thread = threading.Thread(target=receive_handler)
-    send_thread.start()
-    receive_thread.start()
+            print("Successfully registered")
+        threading.excepthook = lambda args: logging.fatal(msg=args)
+        send_thread = threading.Thread(target=send_handler)
+        receive_thread = threading.Thread(target=receive_handler)
+        send_thread.start()
+        receive_thread.start()
+    except [KeyboardInterrupt, EOFError, SystemExit] as e:
+        sys.exit(0)
+    except:
+        logging.fatal(msg=sys.exc_info()[0])
+        sys.exit(1)
