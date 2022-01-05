@@ -10,7 +10,7 @@ repos:
       - id: isort
         stages: [commit]
   - repo: https://github.com/myint/autoflake
-    rev: 3c3b2a2274e40a03d3d8f14815509662e9f454e0
+    rev: v1.4
     hooks:
       - id: autoflake
         args:

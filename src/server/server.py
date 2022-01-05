@@ -6,7 +6,7 @@ import sys
 import msgpack
 
 from utils.exceptions import ExceptionCode, RequestException
-from utils.headers import HeaderCode
+from utils.headers import HeaderCode, Message
 
 HEADER_TYPE_LEN = 1
 HEADER_MSG_LEN = 7
@@ -31,11 +31,11 @@ server_socket.bind((IP, PORT))
 server_socket.listen(5)
 
 sockets_list = [server_socket]
-# uname -> addr: (IP, PORT)
+# uname -> IP
 clients: dict[str, str] = {}
 
 
-def receive_msg(client_socket: socket.socket) -> dict[str, bytes | HeaderCode]:
+def receive_msg(client_socket: socket.socket) -> Message:
     message_type = client_socket.recv(HEADER_TYPE_LEN).decode(FMT)
     if not len(message_type):
         raise RequestException(
@@ -56,7 +56,7 @@ def receive_msg(client_socket: socket.socket) -> dict[str, bytes | HeaderCode]:
         message_len = int(client_socket.recv(HEADER_MSG_LEN).decode(FMT))
         query = client_socket.recv(message_len)
         logging.debug(
-            msg=f"Received packet: TYPE {message_type} QUERY {query} from {client_socket.getpeername()}"
+            msg=f"Received packet: TYPE {message_type} QUERY {query!r} from {client_socket.getpeername()}"
         )
         return {"type": HeaderCode(message_type), "query": query}
 
@@ -128,7 +128,7 @@ def read_handler(notified_socket: socket.socket) -> None:
                 if response_data is not None:
                     if response_data != notified_socket.getpeername()[0]:
                         logging.debug(msg=f"Valid request: {response_data}")
-                        data: bytes = response_data.encode(FMT)
+                        data = response_data.encode(FMT)
                         header = f"{HeaderCode.REQUEST_UNAME.value}{len(data):<{HEADER_MSG_LEN}}".encode(
                             FMT
                         )
@@ -200,7 +200,7 @@ def read_handler(notified_socket: socket.socket) -> None:
                     code=ExceptionCode.BAD_REQUEST,
                 )
         except TypeError as e:
-            logging.error(msg=e.msg)
+            logging.error(msg=e)
             sys.exit(0)
         except RequestException as e:
             if e.code == ExceptionCode.DISCONNECT:
@@ -216,7 +216,7 @@ def read_handler(notified_socket: socket.socket) -> None:
                 except ValueError:
                     logging.info("already removed")
             else:
-                data: bytes = msgpack.packb(
+                data = msgpack.packb(
                     e, default=RequestException.to_dict, use_bin_type=True
                 )
                 header = f"{HeaderCode.ERROR.value}{len(data):<{HEADER_MSG_LEN}}".encode(

@@ -56,12 +56,14 @@ def prompt_username() -> str:
 def send_handler() -> None:
     global client_send_socket
     with patch_stdout():
-        recipient_prompt = PromptSession("\nEnter recipient's username: ")
+        recipient_prompt: PromptSession = PromptSession(
+            "\nEnter recipient's username: "
+        )
         while True:
             recipient = recipient_prompt.prompt()
             if recipient == "!exit":
                 if os.name == "nt":
-                    os._exit()
+                    os._exit(0)
                 else:
                     os.kill(os.getpid(), signal.SIGINT)
             if recipient:
@@ -89,7 +91,7 @@ def send_handler() -> None:
                         (recipient_addr, CLIENT_RECV_PORT)
                     )
                     while True:
-                        msg_prompt = PromptSession(
+                        msg_prompt: PromptSession = PromptSession(
                             f"\nEnter message for {recipient.decode(FMT)}: "
                         )
                         msg = msg_prompt.prompt()
@@ -234,7 +236,7 @@ if __name__ == "__main__":
         receive_thread = threading.Thread(target=receive_handler)
         send_thread.start()
         receive_thread.start()
-    except [KeyboardInterrupt, EOFError, SystemExit] as e:
+    except (KeyboardInterrupt, EOFError, SystemExit):
         sys.exit(0)
     except:
         logging.fatal(msg=sys.exc_info()[0])

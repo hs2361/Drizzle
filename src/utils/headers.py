@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import TypedDict
 
 
 class HeaderCode(Enum):
@@ -8,3 +9,8 @@ class HeaderCode(Enum):
     ERROR = "e"
     MESSAGE = "m"
     FILE = "f"
+
+
+class Message(TypedDict):
+    type: HeaderCode
+    query: bytes

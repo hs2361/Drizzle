@@ -20,5 +20,5 @@ class RequestException(Exception):
         return {"msg": exception.msg, "code": exception.code.value}
 
     @classmethod
-    def from_dict(cls, data: dict) -> None:
+    def from_dict(cls, data: dict) -> "RequestException":
         return cls(msg=data["msg"], code=ExceptionCode(data["code"]))
