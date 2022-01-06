@@ -136,36 +136,33 @@ def send_handler() -> None:
                                         logging.debug(
                                             f"Sending file {filename} to {recipient.decode(FMT)}"
                                         )
-                                        client_peer_socket.send(filesend_header)
                                         client_peer_socket.send(
-                                            filemetadata_bytes
+                                            filesend_header + filemetadata_bytes
                                         )
-                                        progress = tqdm.tqdm(
-                                            range(filemetadata["size"]),
-                                            f"Sending {str(filepath)}",
+                                        with tqdm.tqdm(
+                                            total=filemetadata["size"],
+                                            desc=f"Sending {str(filepath)}",
                                             unit="B",
                                             unit_scale=True,
                                             unit_divisor=1024,
-                                            colour="green",
-                                        )
-                                        total_bytes_read = 0
-                                        while True:
-                                            bytes_read = file_to_send.read(
-                                                FILE_BUFFER_LEN
-                                            )
-                                            client_peer_socket.sendall(
-                                                bytes_read
-                                            )
-                                            total_bytes_read += len(bytes_read)
-                                            progress.update(len(bytes_read))
-                                            if (
+                                        ) as progress:
+                                            total_bytes_read = 0
+                                            while (
                                                 total_bytes_read
-                                                == filemetadata["size"]
+                                                != filemetadata["size"]
                                             ):
-                                                progress.close()
-                                                break
-                                        print("File Sent")
-                                        file_to_send.close()
+                                                bytes_read = file_to_send.read(
+                                                    FILE_BUFFER_LEN
+                                                )
+                                                client_peer_socket.sendall(
+                                                    bytes_read
+                                                )
+                                                num_bytes = len(bytes_read)
+                                                total_bytes_read += num_bytes
+                                                progress.update(num_bytes)
+                                            progress.close()
+                                            print("File Sent")
+                                            file_to_send.close()
                                     except Exception as e:
                                         logging.error(
                                             f"File Sending failed: {e}"
@@ -234,23 +231,22 @@ def receive_msg(socket: socket.socket) -> str:
                 logging.debug(f"Creating and writing to {write_path}")
                 try:
                     byte_count = 0
-                    progress = tqdm.tqdm(
-                        range(file_header["size"]),
-                        f"Receiving {file_header['name']}",
+                    with tqdm.tqdm(
+                        total=file_header["size"],
+                        desc=f"Receiving {file_header['name']}",
                         unit="B",
                         unit_scale=True,
                         unit_divisor=1024,
-                    )
-                    while True:
-                        file_bytes_read: bytes = socket.recv(FILE_BUFFER_LEN)
-                        byte_count += len(file_bytes_read)
-                        file_to_write.write(file_bytes_read)
-                        progress.update(len(file_bytes_read))
-                        if byte_count == file_header["size"]:
-                            progress.close()
-                            break
-                    file_to_write.close()
-                    return "Succesfully received 1 file"
+                    ) as progress:
+                        while byte_count != file_header["size"]:
+                            file_bytes_read: bytes = socket.recv(
+                                FILE_BUFFER_LEN
+                            )
+                            byte_count += len(file_bytes_read)
+                            file_to_write.write(file_bytes_read)
+                            progress.update(len(file_bytes_read))
+                        file_to_write.close()
+                        return "Succesfully received 1 file"
                 except Exception as e:
                     logging.error(e)
                     return "File received but failed to save"
