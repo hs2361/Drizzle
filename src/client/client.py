@@ -1,17 +1,20 @@
 import logging
 import os
+import re
 import select
 import signal
 import socket
 import sys
 import threading
+from pathlib import Path
 
 import msgpack
+import tqdm
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import PromptSession
 
 from utils.exceptions import ExceptionCode, RequestException
-from utils.headers import HeaderCode
+from utils.headers import FileMetadata, HeaderCode
 
 HEADER_TYPE_LEN = 1
 HEADER_MSG_LEN = 7
@@ -22,6 +25,9 @@ FMT = "utf-8"
 CLIENT_IP = socket.gethostbyname(socket.gethostname())
 CLIENT_SEND_PORT = 5678
 CLIENT_RECV_PORT = 4321
+SHARE_FOLDER_PATH = Path("/Drizzle/share")
+RECV_FOLDER_PATH = Path("/Drizzle/downloads")
+FILE_BUFFER_LEN = 4096
 
 logging.basicConfig(
     filename=f"/logs/client_{CLIENT_IP}.log", level=logging.DEBUG
@@ -96,13 +102,87 @@ def send_handler() -> None:
                         )
                         msg = msg_prompt.prompt()
                         if len(msg):
-                            msg = msg.encode(FMT)
-                            if msg == b"!exit":
-                                break
-                            header = f"{HeaderCode.MESSAGE.value}{len(msg):<{HEADER_MSG_LEN}}".encode(
-                                FMT
-                            )
-                            client_peer_socket.send(header + msg)
+                            # filere = "\!send ()"
+                            msg.strip().split()
+                            res = [
+                                r"!send (\S+)$",
+                                r"!send '(.+)'$",
+                                r'!send "(.+)"$',
+                            ]
+                            filename = ""
+                            for r in res:
+                                match_res = re.match(r, msg)
+                                if match_res:
+                                    filename = match_res.group(1)
+                                    break
+                            if filename:
+                                filepath: Path = SHARE_FOLDER_PATH / filename
+                                logging.debug(f"{filepath} chosen to send")
+                                if filepath.exists() and filepath.is_file():
+                                    filemetadata: FileMetadata = {
+                                        "name": filename.split("/")[-1],
+                                        "size": filepath.stat().st_size,
+                                    }
+                                    logging.debug(filemetadata)
+                                    filemetadata_bytes = msgpack.packb(
+                                        filemetadata
+                                    )
+                                    logging.debug(filemetadata_bytes)
+                                    filesend_header = f"{HeaderCode.FILE.value}{len(filemetadata_bytes):<{HEADER_MSG_LEN}}".encode(
+                                        FMT
+                                    )
+                                    try:
+                                        file_to_send = filepath.open(mode="rb")
+                                        logging.debug(
+                                            f"Sending file {filename} to {recipient.decode(FMT)}"
+                                        )
+                                        client_peer_socket.send(filesend_header)
+                                        client_peer_socket.send(
+                                            filemetadata_bytes
+                                        )
+                                        progress = tqdm.tqdm(
+                                            range(filemetadata["size"]),
+                                            f"Sending {str(filepath)}",
+                                            unit="B",
+                                            unit_scale=True,
+                                            unit_divisor=1024,
+                                            colour="green",
+                                        )
+                                        total_bytes_read = 0
+                                        while True:
+                                            bytes_read = file_to_send.read(
+                                                FILE_BUFFER_LEN
+                                            )
+                                            client_peer_socket.sendall(
+                                                bytes_read
+                                            )
+                                            total_bytes_read += len(bytes_read)
+                                            progress.update(len(bytes_read))
+                                            if (
+                                                total_bytes_read
+                                                == filemetadata["size"]
+                                            ):
+                                                progress.close()
+                                                break
+                                        print("File Sent")
+                                        file_to_send.close()
+                                    except Exception as e:
+                                        logging.error(
+                                            f"File Sending failed: {e}"
+                                        )
+                                else:
+                                    logging.error(f"{filepath} not found")
+                                    print(
+                                        f"Unable to perform send request, ensure that the file is available in {SHARE_FOLDER_PATH}"
+                                    )
+                            else:
+                                msg = msg.encode(FMT)
+                                if msg == b"!exit":
+                                    break
+                                header = f"{HeaderCode.MESSAGE.value}{len(msg):<{HEADER_MSG_LEN}}".encode(
+                                    FMT
+                                )
+                                client_peer_socket.send(header + msg)
                 if res_type == HeaderCode.ERROR.value:
                     err: RequestException = msgpack.unpackb(
                         response,
@@ -112,21 +192,74 @@ def send_handler() -> None:
                     logging.error(msg=err)
 
 
+def get_unique_filename(path: Path) -> Path:
+    filename, extension = path.stem, path.suffix
+    counter = 1
+
+    while path.exists():
+        path = RECV_FOLDER_PATH / Path(
+            filename + "_" + str(counter) + extension
+        )
+        counter += 1
+
+    logging.debug(f"unique file name is {path}")
+    return path
+
+
 def receive_msg(socket: socket.socket) -> str:
+    logging.debug(f"Receiving from {socket.getpeername()}")
     message_type = socket.recv(HEADER_TYPE_LEN).decode(FMT)
     if not len(message_type):
         raise RequestException(
             msg=f"Peer at {socket.getpeername()} closed the connection",
             code=ExceptionCode.DISCONNECT,
         )
-    elif message_type != HeaderCode.MESSAGE.value:
+    elif message_type not in [HeaderCode.MESSAGE.value, HeaderCode.FILE.value]:
         raise RequestException(
-            msg="Invalid message type in header",
+            msg=f"Invalid message type in header. Received [{message_type}]",
             code=ExceptionCode.INVALID_HEADER,
         )
     else:
-        message_len = int(socket.recv(HEADER_MSG_LEN).decode(FMT))
-        return socket.recv(message_len).decode(FMT)
+        if message_type == HeaderCode.FILE.value:
+            file_header_len = int(socket.recv(HEADER_MSG_LEN).decode(FMT))
+            file_header: FileMetadata = msgpack.unpackb(
+                socket.recv(file_header_len)
+            )
+            logging.debug(msg=f"receiving file with metadata {file_header}")
+            write_path: Path = get_unique_filename(
+                RECV_FOLDER_PATH / file_header["name"]
+            )
+            try:
+                file_to_write = open(str(write_path), "wb")
+                logging.debug(f"Creating and writing to {write_path}")
+                try:
+                    byte_count = 0
+                    progress = tqdm.tqdm(
+                        range(file_header["size"]),
+                        f"Receiving {file_header['name']}",
+                        unit="B",
+                        unit_scale=True,
+                        unit_divisor=1024,
+                    )
+                    while True:
+                        file_bytes_read: bytes = socket.recv(FILE_BUFFER_LEN)
+                        byte_count += len(file_bytes_read)
+                        file_to_write.write(file_bytes_read)
+                        progress.update(len(file_bytes_read))
+                        if byte_count == file_header["size"]:
+                            progress.close()
+                            break
+                    file_to_write.close()
+                    return "Succesfully received 1 file"
+                except Exception as e:
+                    logging.error(e)
+                    return "File received but failed to save"
+            except Exception as e:
+                logging.error(e)
+                return "Unable to write file"
+        else:
+            message_len = int(socket.recv(HEADER_MSG_LEN).decode(FMT))
+            return socket.recv(message_len).decode(FMT)
 
 
 def receive_handler() -> None:
@@ -195,7 +328,7 @@ def receive_handler() -> None:
                 try:
                     msg: str = receive_msg(notified_socket)
                     username = peers[notified_socket.getpeername()[0]]
-                    print(f"{username} says: {msg}")
+                    print(f"{username} > {msg}")
                 except RequestException as e:
                     if e.code == ExceptionCode.DISCONNECT:
                         try:
@@ -208,6 +341,7 @@ def receive_handler() -> None:
 
 def excepthook(args: threading.ExceptHookArgs):
     logging.fatal(msg=args)
+    logging.fatal(msg=args.exc_traceback)
 
 
 if __name__ == "__main__":
@@ -231,7 +365,7 @@ if __name__ == "__main__":
                 sys.exit(1)
         else:
             print("Successfully registered")
-        threading.excepthook = lambda args: logging.fatal(msg=args)
+        threading.excepthook = excepthook
         send_thread = threading.Thread(target=send_handler)
         receive_thread = threading.Thread(target=receive_handler)
         send_thread.start()

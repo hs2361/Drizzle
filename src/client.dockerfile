@@ -10,5 +10,8 @@ COPY ./utils ./utils
 
 RUN pip install pipenv
 RUN pipenv install --system --deploy --ignore-pipfile
+RUN mkdir ../share
+ARG file='./FAC Archive.zip'
+COPY ${file} ../share/fac/
 
 ENTRYPOINT [ "python", "client.py" ]
