@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import TypedDict
+from typing import NamedTuple, TypedDict
 
 
 class HeaderCode(Enum):
@@ -9,6 +9,9 @@ class HeaderCode(Enum):
     ERROR = "e"
     MESSAGE = "m"
     FILE = "f"
+    PORT_ALLOCATION = "p"
+    SHARE_DATA = "d"
+    FILE_SEARCH = "s"
 
 
 class Message(TypedDict):
@@ -19,3 +22,9 @@ class Message(TypedDict):
 class FileMetadata(TypedDict):
     name: str
     size: int
+
+
+class FileSearchResult(NamedTuple):
+    uname: str
+    filepath: str
+    filesize: int

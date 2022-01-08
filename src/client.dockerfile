@@ -11,7 +11,8 @@ COPY ./utils ./utils
 RUN pip install pipenv
 RUN pipenv install --system --deploy --ignore-pipfile
 RUN mkdir ../share
-ARG file='./FAC Archive.zip'
-COPY ${file} ../share/fac/
+RUN echo "Hello" > ../share/hello.txt
+RUN mkdir ../share/sub
+RUN echo "Hello from the inside" > ../share/sub/hello2.txt
 
 ENTRYPOINT [ "python", "client.py" ]

@@ -1,12 +1,13 @@
 import logging
 import select
 import socket
+import sqlite3
 import sys
 
 import msgpack
 
 from utils.exceptions import ExceptionCode, RequestException
-from utils.headers import HeaderCode, Message
+from utils.headers import FileMetadata, FileSearchResult, HeaderCode, Message
 
 HEADER_TYPE_LEN = 1
 HEADER_MSG_LEN = 7
@@ -32,7 +33,56 @@ server_socket.listen(5)
 
 sockets_list = [server_socket]
 # uname -> IP
-clients: dict[str, str] = {}
+uname_to_ip: dict[str, str] = {}
+ip_to_uname: dict[str, str] = {}
+
+db_connection = sqlite3.connect("files.db")
+db = db_connection.cursor()
+db.execute(
+    """
+    CREATE TABLE IF NOT EXISTS files (
+        uname TEXT,
+        filepath TEXT,
+        filesize INTEGER,
+        PRIMARY KEY (uname, filepath)
+    )
+    """
+)
+db.execute(
+    """
+    CREATE INDEX IF NOT EXISTS files_by_filepath ON files(filepath)
+    """
+)
+db_connection.commit()
+
+
+# NEW SHARE_DATA
+def insert_share_data(uname: str, filepath: str, filesize: int):
+    query = """
+            INSERT INTO files(uname, filepath, filesize) VALUES (?, ?, ?)
+            """
+    args = (uname, filepath, filesize)
+    db.execute(query, args)
+
+
+def search_files(query_string: str, self_uname: str) -> list[FileSearchResult]:
+    query = """
+            SELECT uname, filepath, filesize FROM files WHERE filepath LIKE ? AND uname != ?
+            """
+    args = ("%" + query_string + "%", self_uname)
+    db.execute(query, args)
+    return db.fetchall()
+
+
+# UPDATE SHARE_DATA
+"""
+DELETE FROM files WHERE uname = {uname} AND filepath={filepath}
+"""
+
+# FILE_LOOKUP
+"""
+SELECT uname, filepath, filesize FROM files where filepath LIKE %{querystring}%
+"""
 
 
 def receive_msg(client_socket: socket.socket) -> Message:
@@ -46,6 +96,8 @@ def receive_msg(client_socket: socket.socket) -> Message:
         HeaderCode.NEW_CONNECTION.value,
         HeaderCode.REQUEST_UNAME.value,
         HeaderCode.LOOKUP_ADDRESS.value,
+        HeaderCode.SHARE_DATA.value,
+        HeaderCode.FILE_SEARCH.value,
     ]:
         logging.error(msg=f"Received message type {message_type}")
         raise RequestException(
@@ -62,7 +114,7 @@ def receive_msg(client_socket: socket.socket) -> Message:
 
 
 def read_handler(notified_socket: socket.socket) -> None:
-    global clients
+    global uname_to_ip
     global sockets_list
     if notified_socket == server_socket:
         client_socket, client_addr = server_socket.accept()
@@ -71,12 +123,13 @@ def read_handler(notified_socket: socket.socket) -> None:
             uname = userdata["query"].decode(FMT)
             sockets_list.append(client_socket)
             if userdata["type"] == HeaderCode.NEW_CONNECTION:
-                addr = clients.get(uname)
+                addr = uname_to_ip.get(uname)
                 logging.debug(
                     msg=f"Registration request for username {uname} from address {client_addr}"
                 )
                 if addr is None:
-                    clients[uname] = client_addr[0]
+                    uname_to_ip[uname] = client_addr[0]
+                    ip_to_uname[client_addr[0]] = uname
                     logging.debug(
                         msg=(
                             "Accepted new connection from"
@@ -112,19 +165,21 @@ def read_handler(notified_socket: socket.socket) -> None:
                     FMT
                 )
                 client_socket.send(header + data)
-            for key, value in clients.items():
-                if value == client_addr[0]:
-                    del clients[key]
-                    break
-            else:
-                logging.debug(msg=f"Username for IP {client_addr[0]} not found")
+            uname = ip_to_uname.pop(client_addr[0], None)
+            uname_to_ip.pop(uname, None)
+            # for key, value in uname_to_ip.items():
+            #     if value == client_addr[0]:
+            #         del uname_to_ip[key]
+            #         break
+            # else:
+            #     logging.debug(msg=f"Username for IP {client_addr[0]} not found")
             logging.error(msg=e.msg)
             return
     else:
         try:
             request = receive_msg(notified_socket)
             if request["type"] == HeaderCode.REQUEST_UNAME:
-                response_data = clients.get(request["query"].decode(FMT))
+                response_data = uname_to_ip.get(request["query"].decode(FMT))
                 if response_data is not None:
                     if response_data != notified_socket.getpeername()[0]:
                         logging.debug(msg=f"Valid request: {response_data}")
@@ -146,14 +201,13 @@ def read_handler(notified_socket: socket.socket) -> None:
             elif request["type"] == HeaderCode.LOOKUP_ADDRESS:
                 lookup_addr = request["query"].decode(FMT)
                 if lookup_addr != notified_socket.getpeername()[0]:
-                    for key, value in clients.items():
-                        if value == lookup_addr:
-                            username = key.encode(FMT)
-                            header = f"{HeaderCode.LOOKUP_ADDRESS.value}{len(username):<{HEADER_MSG_LEN}}".encode(
-                                FMT
-                            )
-                            notified_socket.send(header + username)
-                            break
+                    username = ip_to_uname.get(lookup_addr)
+                    if username is not None:
+                        username_bytes = username.encode(FMT)
+                        header = f"{HeaderCode.LOOKUP_ADDRESS.value}{len(username):<{HEADER_MSG_LEN}}".encode(
+                            FMT
+                        )
+                        notified_socket.send(header + username_bytes)
                     else:
                         raise RequestException(
                             msg=f"Username for {lookup_addr} not found",
@@ -166,13 +220,13 @@ def read_handler(notified_socket: socket.socket) -> None:
                     )
             elif request["type"] == HeaderCode.NEW_CONNECTION:
                 uname = request["query"].decode(FMT)
-                addr = clients.get(uname)
+                addr = uname_to_ip.get(uname)
                 client_addr = notified_socket.getpeername()
                 logging.debug(
                     f"Registration request for username {uname} from address {client_addr}"
                 )
                 if addr is None:
-                    clients[uname] = client_addr[0]
+                    uname_to_ip[uname] = client_addr[0]
                     logging.debug(
                         msg=(
                             "Accepted new connection from"
@@ -194,6 +248,41 @@ def read_handler(notified_socket: socket.socket) -> None:
                             msg="Cannot re-register user for same address",
                             code=ExceptionCode.BAD_REQUEST,
                         )
+            elif request["type"] == HeaderCode.SHARE_DATA:
+                share_data: list[FileMetadata] = msgpack.unpackb(
+                    request["query"]
+                )
+                username = ip_to_uname.get(notified_socket.getpeername()[0])
+                if username is not None:
+                    for file_data in share_data:
+                        insert_share_data(
+                            username, file_data["name"], file_data["size"]
+                        )
+                    db_connection.commit()
+                else:
+                    raise RequestException(
+                        msg=f"Username does not exist",
+                        code=ExceptionCode.NOT_FOUND,
+                    )
+            elif request["type"] == HeaderCode.FILE_SEARCH:
+                username = ip_to_uname.get(notified_socket.getpeername()[0])
+                if username is not None:
+                    search_result = search_files(
+                        request["query"].decode(FMT), username
+                    )
+                    logging.debug(f"{search_result}")
+                    search_result_bytes = msgpack.packb(search_result)
+                    search_result_header = f"{HeaderCode.FILE_SEARCH.value}{len(search_result_bytes):<{HEADER_MSG_LEN}}".encode(
+                        FMT
+                    )
+                    notified_socket.send(
+                        search_result_header + search_result_bytes
+                    )
+                else:
+                    raise RequestException(
+                        msg=f"Username does not exist",
+                        code=ExceptionCode.NOT_FOUND,
+                    )
             else:
                 raise RequestException(
                     msg=f"Bad request from {notified_socket.getpeername()}",
@@ -206,13 +295,9 @@ def read_handler(notified_socket: socket.socket) -> None:
             if e.code == ExceptionCode.DISCONNECT:
                 try:
                     sockets_list.remove(notified_socket)
-                    addr = notified_socket.getpeername()[0]
-                    for key, value in clients.items():
-                        if value == addr:
-                            del clients[key]
-                            break
-                    else:
-                        logging.debug(f"Username for IP {addr} not found")
+                    addr_to_remove: str = notified_socket.getpeername()[0]
+                    uname = ip_to_uname.pop(addr_to_remove, None)
+                    uname_to_ip.pop(uname, None)
                 except ValueError:
                     logging.info("already removed")
             else:

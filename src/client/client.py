@@ -14,7 +14,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.shortcuts import PromptSession
 
 from utils.exceptions import ExceptionCode, RequestException
-from utils.headers import FileMetadata, HeaderCode
+from utils.headers import FileMetadata, FileSearchResult, HeaderCode
 
 HEADER_TYPE_LEN = 1
 HEADER_MSG_LEN = 7
@@ -46,6 +46,17 @@ client_recv_socket.bind((CLIENT_IP, CLIENT_RECV_PORT))
 client_send_socket.connect((SERVER_IP, SERVER_PORT))
 client_recv_socket.listen(5)
 connected = [client_recv_socket]
+
+
+def get_sharable_files() -> list[FileMetadata]:
+    shareable_files: list[FileMetadata] = []
+    for (root, _, files) in os.walk(str(SHARE_FOLDER_PATH)):
+        for f in files:
+            fname = root + "/" + f
+            shareable_files.append(
+                {"name": fname, "size": Path(fname).stat().st_size}
+            )
+    return shareable_files
 
 
 def prompt_username() -> str:
@@ -104,16 +115,27 @@ def send_handler() -> None:
                         if len(msg):
                             # filere = "\!send ()"
                             msg.strip().split()
-                            res = [
+                            send_res_list = [
                                 r"!send (\S+)$",
                                 r"!send '(.+)'$",
                                 r'!send "(.+)"$',
                             ]
+                            search_res_list = [
+                                r"!search (\S+)$",
+                                r"!search '(.+)'$",
+                                r'!search "(.+)"$',
+                            ]
                             filename = ""
-                            for r in res:
+                            for r in send_res_list:
                                 match_res = re.match(r, msg)
                                 if match_res:
                                     filename = match_res.group(1)
+                                    break
+                            searchquery = ""
+                            for r in search_res_list:
+                                match_res = re.match(r, msg)
+                                if match_res:
+                                    searchquery = match_res.group(1)
                                     break
                             if filename:
                                 filepath: Path = SHARE_FOLDER_PATH / filename
@@ -172,6 +194,37 @@ def send_handler() -> None:
                                     print(
                                         f"Unable to perform send request, ensure that the file is available in {SHARE_FOLDER_PATH}"
                                     )
+                            elif searchquery:
+                                searchquery_bytes = searchquery.encode(FMT)
+                                search_header = f"{HeaderCode.FILE_SEARCH.value}{len(searchquery_bytes):<{HEADER_MSG_LEN}}".encode(
+                                    FMT
+                                )
+                                client_send_socket.send(
+                                    search_header + searchquery_bytes
+                                )
+                                response_header_type = client_send_socket.recv(
+                                    HEADER_TYPE_LEN
+                                ).decode(FMT)
+                                if (
+                                    response_header_type
+                                    == HeaderCode.FILE_SEARCH.value
+                                ):
+                                    response_len = int(
+                                        client_send_socket.recv(HEADER_MSG_LEN)
+                                        .decode(FMT)
+                                        .strip()
+                                    )
+                                    search_result: tuple[
+                                        FileSearchResult
+                                    ] = msgpack.unpackb(
+                                        client_send_socket.recv(response_len),
+                                        use_list=False,
+                                    )
+                                    print(search_result)
+                                else:
+                                    logging.error(
+                                        "Error occured while searching for files"
+                                    )
                             else:
                                 msg = msg.encode(FMT)
                                 if msg == b"!exit":
@@ -211,7 +264,11 @@ def receive_msg(socket: socket.socket) -> str:
             msg=f"Peer at {socket.getpeername()} closed the connection",
             code=ExceptionCode.DISCONNECT,
         )
-    elif message_type not in [HeaderCode.MESSAGE.value, HeaderCode.FILE.value]:
+    elif message_type not in [
+        HeaderCode.MESSAGE.value,
+        HeaderCode.FILE.value,
+        HeaderCode.FILE_SEARCH,
+    ]:
         raise RequestException(
             msg=f"Invalid message type in header. Received [{message_type}]",
             code=ExceptionCode.INVALID_HEADER,
@@ -359,8 +416,13 @@ if __name__ == "__main__":
                 client_send_socket.close()
                 client_recv_socket.close()
                 sys.exit(1)
-        else:
-            print("Successfully registered")
+
+        print("Successfully registered")
+        share_data = msgpack.packb(get_sharable_files())
+        share_data_header = f"{HeaderCode.SHARE_DATA.value}{len(share_data):<{HEADER_MSG_LEN}}".encode(
+            FMT
+        )
+        client_send_socket.send(share_data_header + share_data)
         threading.excepthook = excepthook
         send_thread = threading.Thread(target=send_handler)
         receive_thread = threading.Thread(target=receive_handler)
