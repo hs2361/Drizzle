@@ -7,7 +7,7 @@ import sys
 import msgpack
 
 from utils.exceptions import ExceptionCode, RequestException
-from utils.headers import FileMetadata, FileSearchResult, HeaderCode, Message
+from utils.types import FileMetadata, FileSearchResult, HeaderCode, Message
 
 HEADER_TYPE_LEN = 1
 HEADER_MSG_LEN = 7
@@ -71,17 +71,12 @@ def search_files(query_string: str, self_uname: str) -> list[FileSearchResult]:
             """
     args = ("%" + query_string + "%", self_uname)
     db.execute(query, args)
-    return db.fetchall()
+    return [FileSearchResult(*result) for result in db.fetchall()]
 
 
 # UPDATE SHARE_DATA
 """
 DELETE FROM files WHERE uname = {uname} AND filepath={filepath}
-"""
-
-# FILE_LOOKUP
-"""
-SELECT uname, filepath, filesize FROM files where filepath LIKE %{querystring}%
 """
 
 
@@ -137,9 +132,7 @@ def read_handler(notified_socket: socket.socket) -> None:
                             f" username: {userdata['query'].decode(FMT)}"
                         )
                     )
-                    client_socket.send(
-                        f"{HeaderCode.NEW_CONNECTION.value}".encode(FMT)
-                    )
+                    client_socket.send(f"{HeaderCode.NEW_CONNECTION.value}".encode(FMT))
                 else:
                     if addr != client_addr[0]:
                         raise RequestException(
@@ -158,21 +151,11 @@ def read_handler(notified_socket: socket.socket) -> None:
                 )
         except RequestException as e:
             if e.code != ExceptionCode.DISCONNECT:
-                data: bytes = msgpack.packb(
-                    e, default=RequestException.to_dict, use_bin_type=True
-                )
-                header = f"{HeaderCode.ERROR.value}{len(data):<{HEADER_MSG_LEN}}".encode(
-                    FMT
-                )
+                data: bytes = msgpack.packb(e, default=RequestException.to_dict, use_bin_type=True)
+                header = f"{HeaderCode.ERROR.value}{len(data):<{HEADER_MSG_LEN}}".encode(FMT)
                 client_socket.send(header + data)
             uname = ip_to_uname.pop(client_addr[0], None)
             uname_to_ip.pop(uname, None)
-            # for key, value in uname_to_ip.items():
-            #     if value == client_addr[0]:
-            #         del uname_to_ip[key]
-            #         break
-            # else:
-            #     logging.debug(msg=f"Username for IP {client_addr[0]} not found")
             logging.error(msg=e.msg)
             return
     else:
@@ -184,8 +167,10 @@ def read_handler(notified_socket: socket.socket) -> None:
                     if response_data != notified_socket.getpeername()[0]:
                         logging.debug(msg=f"Valid request: {response_data}")
                         data = response_data.encode(FMT)
-                        header = f"{HeaderCode.REQUEST_UNAME.value}{len(data):<{HEADER_MSG_LEN}}".encode(
-                            FMT
+                        header = (
+                            f"{HeaderCode.REQUEST_UNAME.value}{len(data):<{HEADER_MSG_LEN}}".encode(
+                                FMT
+                            )
                         )
                         notified_socket.send(header + data)
                     else:
@@ -234,9 +219,7 @@ def read_handler(notified_socket: socket.socket) -> None:
                             f" username: {uname}"
                         )
                     )
-                    notified_socket.send(
-                        f"{HeaderCode.NEW_CONNECTION.value}".encode(FMT)
-                    )
+                    notified_socket.send(f"{HeaderCode.NEW_CONNECTION.value}".encode(FMT))
                 else:
                     if addr != client_addr[0]:
                         raise RequestException(
@@ -249,15 +232,11 @@ def read_handler(notified_socket: socket.socket) -> None:
                             code=ExceptionCode.BAD_REQUEST,
                         )
             elif request["type"] == HeaderCode.SHARE_DATA:
-                share_data: list[FileMetadata] = msgpack.unpackb(
-                    request["query"]
-                )
+                share_data: list[FileMetadata] = msgpack.unpackb(request["query"])
                 username = ip_to_uname.get(notified_socket.getpeername()[0])
                 if username is not None:
                     for file_data in share_data:
-                        insert_share_data(
-                            username, file_data["name"], file_data["size"]
-                        )
+                        insert_share_data(username, file_data["name"], file_data["size"])
                     db_connection.commit()
                 else:
                     raise RequestException(
@@ -267,17 +246,13 @@ def read_handler(notified_socket: socket.socket) -> None:
             elif request["type"] == HeaderCode.FILE_SEARCH:
                 username = ip_to_uname.get(notified_socket.getpeername()[0])
                 if username is not None:
-                    search_result = search_files(
-                        request["query"].decode(FMT), username
-                    )
+                    search_result = search_files(request["query"].decode(FMT), username)
                     logging.debug(f"{search_result}")
                     search_result_bytes = msgpack.packb(search_result)
                     search_result_header = f"{HeaderCode.FILE_SEARCH.value}{len(search_result_bytes):<{HEADER_MSG_LEN}}".encode(
                         FMT
                     )
-                    notified_socket.send(
-                        search_result_header + search_result_bytes
-                    )
+                    notified_socket.send(search_result_header + search_result_bytes)
                 else:
                     raise RequestException(
                         msg=f"Username does not exist",
@@ -301,12 +276,8 @@ def read_handler(notified_socket: socket.socket) -> None:
                 except ValueError:
                     logging.info("already removed")
             else:
-                data = msgpack.packb(
-                    e, default=RequestException.to_dict, use_bin_type=True
-                )
-                header = f"{HeaderCode.ERROR.value}{len(data):<{HEADER_MSG_LEN}}".encode(
-                    FMT
-                )
+                data = msgpack.packb(e, default=RequestException.to_dict, use_bin_type=True)
+                header = f"{HeaderCode.ERROR.value}{len(data):<{HEADER_MSG_LEN}}".encode(FMT)
                 notified_socket.send(header + data)
             logging.error(msg=f"Exception: {e.msg}")
             return
@@ -316,8 +287,6 @@ while True:
     read_sockets: list[socket.socket]
     exception_sockets: list[socket.socket]
 
-    read_sockets, _, exception_sockets = select.select(
-        sockets_list, [], sockets_list
-    )
+    read_sockets, _, exception_sockets = select.select(sockets_list, [], sockets_list)
     for notified_socket in read_sockets:
         read_handler(notified_socket)

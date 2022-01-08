@@ -3,11 +3,11 @@ from typing import TypedDict
 
 
 class ExceptionCode(IntEnum):
-    DISCONNECT = 0
-    INVALID_HEADER = 1
-    BAD_REQUEST = 2
-    NOT_FOUND = 4
-    USER_EXISTS = 5
+    BAD_REQUEST = 0
+    DISCONNECT = 1
+    INVALID_HEADER = 2
+    NOT_FOUND = 3
+    USER_EXISTS = 3
 
 
 class RequestExceptionDict(TypedDict):
