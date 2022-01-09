@@ -11,8 +11,6 @@ COPY ./utils ./utils
 RUN pip install pipenv
 RUN pipenv install --system --deploy --ignore-pipfile
 RUN mkdir ../share
-RUN echo "Hello" > ../share/hello.txt
-RUN mkdir ../share/sub
-RUN echo "Hello from the inside" > ../share/sub/hello2.txt
+RUN fallocate -l 1G ../share/test.file
 
 ENTRYPOINT [ "python", "client.py" ]

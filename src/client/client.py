@@ -433,6 +433,7 @@ def receive_msg(socket: socket.socket) -> str:
             file_req_header: FileRequest = msgpack.unpackb(socket.recv(req_header_len))
             logging.debug(msg=f"Received request: {file_req_header}")
             requested_file_path = Path(file_req_header["filepath"])
+            # TODO: Check if file is in share folder
             if requested_file_path.is_file():
                 socket.send(HeaderCode.FILE_REQUEST.value.encode(FMT))
                 send_file_thread = threading.Thread(
@@ -442,6 +443,7 @@ def receive_msg(socket: socket.socket) -> str:
                 send_file_thread.start()
                 return "File requested by user"
             else:
+                # TODO: Update file info on server
                 raise RequestException(
                     f"Requested file {file_req_header['filepath']} is not available",
                     ExceptionCode.NOT_FOUND,
@@ -519,7 +521,7 @@ def receive_handler() -> None:
                     break
 
 
-def excepthook(args: threading.ExceptHookArgs):
+def excepthook(args: threading.ExceptHookArgs) -> None:
     logging.fatal(msg=args)
     logging.fatal(msg=args.exc_traceback)
 
