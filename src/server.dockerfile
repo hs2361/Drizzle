@@ -4,6 +4,7 @@ EXPOSE 1234
 
 WORKDIR /Drizzle/src
 
+RUN rm -rf ./*
 COPY ./server .
 COPY ./utils ./utils
 

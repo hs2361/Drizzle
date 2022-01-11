@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import re
@@ -43,12 +44,26 @@ client_recv_socket.listen(5)
 connected = [client_recv_socket]
 
 
+def get_file_hash(filepath: str) -> str:
+    hash = hashlib.sha1()
+    with open(filepath, "rb") as file:
+        while True:
+            file_bytes = file.read(FILE_BUFFER_LEN)
+            hash.update(file_bytes)
+            if len(file_bytes) < FILE_BUFFER_LEN:
+                break
+    return hash.hexdigest()
+
+
 def get_sharable_files() -> list[FileMetadata]:
     shareable_files: list[FileMetadata] = []
     for (root, _, files) in os.walk(str(SHARE_FOLDER_PATH)):
         for f in files:
             fname = root + "/" + f
-            shareable_files.append({"name": fname, "size": Path(fname).stat().st_size})
+            hash = get_file_hash(fname)
+            shareable_files.append(
+                {"name": fname, "size": Path(fname).stat().st_size, "hash": hash}
+            )
     return shareable_files
 
 
@@ -86,40 +101,60 @@ def request_file(file_requested: FileSearchResult, client_peer_socket: socket.so
                 file_header_len = int(sender.recv(HEADER_MSG_LEN).decode(FMT))
                 file_header: FileMetadata = msgpack.unpackb(sender.recv(file_header_len))
                 logging.debug(msg=f"receiving file with metadata {file_header}")
-                # Check if free disk space is available
-                if shutil.disk_usage(str(RECV_FOLDER_PATH)).free > file_header["size"]:
-                    write_path: Path = get_unique_filename(RECV_FOLDER_PATH / file_header["name"])
-                    try:
-                        file_to_write = write_path.open("wb")
-                        logging.debug(f"Creating and writing to {write_path}")
+                if file_requested.hash == file_header["hash"]:
+                    # Check if free disk space is available
+                    if shutil.disk_usage(str(RECV_FOLDER_PATH)).free > file_header["size"]:
+                        write_path: Path = get_unique_filename(
+                            RECV_FOLDER_PATH / file_header["name"]
+                        )
                         try:
-                            byte_count = 0
-                            with tqdm.tqdm(
-                                total=file_header["size"],
-                                desc=f"Receiving {file_header['name']}",
-                                unit="B",
-                                unit_scale=True,
-                                unit_divisor=1024,
-                            ) as progress:
-                                while byte_count != file_header["size"]:
-                                    file_bytes_read: bytes = sender.recv(FILE_BUFFER_LEN)
-                                    byte_count += len(file_bytes_read)
-                                    file_to_write.write(file_bytes_read)
-                                    progress.update(len(file_bytes_read))
-                                file_to_write.close()
-                                return "Succesfully received 1 file"
+                            file_to_write = write_path.open("wb")
+                            logging.debug(f"Creating and writing to {write_path}")
+                            try:
+                                byte_count = 0
+                                hash = hashlib.sha1()
+                                with tqdm.tqdm(
+                                    total=file_header["size"],
+                                    desc=f"Receiving {file_header['name']}",
+                                    unit="B",
+                                    unit_scale=True,
+                                    unit_divisor=1024,
+                                ) as progress:
+                                    while True:
+                                        file_bytes_read: bytes = sender.recv(FILE_BUFFER_LEN)
+                                        hash.update(file_bytes_read)
+                                        num_bytes_read = len(file_bytes_read)
+                                        byte_count += num_bytes_read
+                                        file_to_write.write(file_bytes_read)
+                                        progress.update(num_bytes_read)
+                                        logging.debug(
+                                            msg=f"Received chunk of size {num_bytes_read}"
+                                        )
+                                        if num_bytes_read < FILE_BUFFER_LEN:
+                                            break
+                                    file_to_write.close()
+                                    if hash.hexdigest() == file_requested.hash:
+                                        return "Succesfully received 1 file"
+                                    else:
+                                        logging.error(
+                                            msg=f"Failed integrity check for file {file_header['name']}"
+                                        )
+                                        return "Integrity check failed"
+                            except Exception as e:
+                                logging.error(e)
+                                return "File received but failed to save"
                         except Exception as e:
                             logging.error(e)
-                            return "File received but failed to save"
-                    except Exception as e:
-                        logging.error(e)
-                        return "Unable to write file"
+                            return "Unable to write file"
 
+                    else:
+                        logging.error(
+                            msg=f"Not enough space to receive file {file_header['name']}, {file_header['size']}"
+                        )
+                        return "Not enough space to receive file"
                 else:
-                    logging.error(
-                        msg=f"Not enough space to receive file {file_header['name']}, {file_header['size']}"
-                    )
-                    return "Not enough space to receive file"
+                    logging.error(msg=f"Failed integrity check for file {file_header['name']}")
+                    return "Integrity check failed"
             else:
                 raise RequestException(
                     f"Sender sent invalid message type in header: {res_type}",
@@ -373,9 +408,12 @@ def send_file(filepath: Path, requester: tuple[str, int]):
     file_send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     file_send_socket.connect(requester)
 
+    hash = get_file_hash(str(filepath))
+
     filemetadata: FileMetadata = {
         "name": str(filepath).split("/")[-1],
         "size": filepath.stat().st_size,
+        "hash": hash,
     }
     logging.debug(filemetadata)
     filemetadata_bytes = msgpack.packb(filemetadata)

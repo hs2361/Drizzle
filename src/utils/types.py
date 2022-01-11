@@ -22,6 +22,7 @@ class Message(TypedDict):
 class FileMetadata(TypedDict):
     name: str
     size: int
+    hash: str
 
 
 class FileRequest(TypedDict):
@@ -33,3 +34,4 @@ class FileSearchResult(NamedTuple):
     uname: str
     filepath: str
     filesize: int
+    hash: str

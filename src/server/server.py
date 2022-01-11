@@ -44,6 +44,7 @@ db.execute(
         uname TEXT,
         filepath TEXT,
         filesize INTEGER,
+        hash TEXT,
         PRIMARY KEY (uname, filepath)
     )
     """
@@ -57,17 +58,17 @@ db_connection.commit()
 
 
 # NEW SHARE_DATA
-def insert_share_data(uname: str, filepath: str, filesize: int):
+def insert_share_data(uname: str, filepath: str, filesize: int, hash: str):
     query = """
-            INSERT INTO files(uname, filepath, filesize) VALUES (?, ?, ?)
+            INSERT INTO files(uname, filepath, filesize, hash) VALUES (?, ?, ?, ?)
             """
-    args = (uname, filepath, filesize)
+    args = (uname, filepath, filesize, hash)
     db.execute(query, args)
 
 
 def search_files(query_string: str, self_uname: str) -> list[FileSearchResult]:
     query = """
-            SELECT uname, filepath, filesize FROM files WHERE filepath LIKE ? AND uname != ?
+            SELECT uname, filepath, filesize, hash FROM files WHERE filepath LIKE ? AND uname != ?
             """
     args = ("%" + query_string + "%", self_uname)
     db.execute(query, args)
@@ -236,7 +237,9 @@ def read_handler(notified_socket: socket.socket) -> None:
                 username = ip_to_uname.get(notified_socket.getpeername()[0])
                 if username is not None:
                     for file_data in share_data:
-                        insert_share_data(username, file_data["name"], file_data["size"])
+                        insert_share_data(
+                            username, file_data["name"], file_data["size"], file_data["hash"]
+                        )
                     db_connection.commit()
                 else:
                     raise RequestException(
