@@ -1,14 +1,10 @@
 repos:
-  - repo: https://github.com/psf/black
-    rev: 21.12b0
-    hooks:
-      - id: black
-        args: ["--line-length", "100"]
   - repo: https://github.com/pycqa/isort
     rev: 5.10.1
     hooks:
       - id: isort
         stages: [commit]
+        args: ["--line-length", "100", "--multi-line", "3"]
   - repo: https://github.com/myint/autoflake
     rev: v1.4
     hooks:
@@ -19,6 +15,11 @@ repos:
             "--remove-all-unused-imports",
             "--remove-unused-variable",
           ]
+  - repo: https://github.com/psf/black
+    rev: 21.12b0
+    hooks:
+      - id: black
+        args: ["--line-length", "100", "--target-version", "py310"]
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.1.0
     hooks:
