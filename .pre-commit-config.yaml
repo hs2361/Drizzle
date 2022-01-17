@@ -4,7 +4,7 @@ repos:
     hooks:
       - id: isort
         stages: [commit]
-        args: ["--line-length", "100", "--multi-line", "3"]
+        args: ["--line-length", "100", "--multi-line", "3", "--profile", "black"]
   - repo: https://github.com/myint/autoflake
     rev: v1.4
     hooks:

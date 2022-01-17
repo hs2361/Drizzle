@@ -7,10 +7,10 @@ class HeaderCode(Enum):
     FILE = "f"
     FILE_REQUEST = "F"
     FILE_SEARCH = "s"
-    LOOKUP_ADDRESS = "l"
+    REQUEST_UNAME = "R"
     MESSAGE = "m"
     NEW_CONNECTION = "n"
-    REQUEST_UNAME = "r"
+    REQUEST_IP = "r"
     SHARE_DATA = "d"
     UPDATE_HASH = "h"
 
@@ -45,6 +45,40 @@ class FileSearchResult(NamedTuple):
     hash: str
 
 
+class DirData(TypedDict):
+    name: str
+    path: str
+    type: str
+    size: int | None
+    hash: str | None
+    compression: int
+    children: list["DirData"] | None  # type: ignore
+
+
 class UpdateHashParams(TypedDict):
     filepath: str
     hash: str
+
+
+class DBData(TypedDict):
+    uname: str
+    share: list[DirData]
+
+
+"""
+share: [
+    file1,
+    file2,
+    {
+        folder1: [
+            file3,
+            {
+                folder3: [
+                    file4
+                ]
+            }
+        ],
+        folder2: []
+    }
+]
+"""

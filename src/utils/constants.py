@@ -1,0 +1,14 @@
+from pathlib import Path
+
+HEADER_TYPE_LEN = 1
+HEADER_MSG_LEN = 7
+FMT = "utf-8"
+CLIENT_SEND_PORT = 5678
+CLIENT_RECV_PORT = 4321
+SHARE_FOLDER_PATH = Path("/Drizzle/share")
+SHARE_COMPRESSED_PATH = Path("/Drizzle/compressed")
+RECV_FOLDER_PATH = Path("/Drizzle/downloads")
+FILE_BUFFER_LEN = 16 * 2 ** 10  # 16KB
+HASH_BUFFER_LEN = 16 * 2 ** 20  # 16MB
+COMPRESSION_THRESHOLD = 500 * 2 ** 20  # 500MB
+SERVER_RECV_PORT = 1234

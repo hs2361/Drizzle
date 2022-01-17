@@ -1,19 +1,18 @@
 import logging
 import select
 import socket
-import sqlite3
 import sys
 
 import msgpack
+from tinydb import Query, TinyDB
 
+from utils.constants import FMT, HEADER_MSG_LEN, HEADER_TYPE_LEN, SERVER_RECV_PORT
 from utils.exceptions import ExceptionCode, RequestException
-from utils.types import FileMetadata, FileSearchResult, HeaderCode, Message, UpdateHashParams
+from utils.helpers import update_file_hash
+from utils.types import DBData, DirData, HeaderCode, Message, UpdateHashParams
 
-HEADER_TYPE_LEN = 1
-HEADER_MSG_LEN = 7
 IP = socket.gethostbyname(socket.gethostname())
-PORT = 1234
-FMT = "utf-8"
+
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -23,64 +22,20 @@ logging.basicConfig(
     ],
 )
 
+drizzle_db = TinyDB("/Drizzle/db/db.json")
+
 print(f"SERVER IP: {IP}")
 
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-server_socket.bind((IP, PORT))
+server_socket.bind((IP, SERVER_RECV_PORT))
 server_socket.listen(5)
 
 sockets_list = [server_socket]
 # uname -> IP
 uname_to_ip: dict[str, str] = {}
 ip_to_uname: dict[str, str] = {}
-
-db_connection = sqlite3.connect("files.db")
-db = db_connection.cursor()
-db.execute(
-    """
-    CREATE TABLE IF NOT EXISTS files (
-        uname TEXT NOT NULL,
-        filepath TEXT NOT NULL,
-        filesize INTEGER NOT NULL,
-        hash TEXT,
-        PRIMARY KEY (uname, filepath)
-    )
-    """
-)
-db.execute(
-    """
-    CREATE INDEX IF NOT EXISTS files_by_filepath ON files(filepath)
-    """
-)
-db_connection.commit()
-
-
-# NEW SHARE_DATA
-def insert_share_data(uname: str, filepath: str, filesize: int, hash: str | None):
-    query = """
-            INSERT INTO files(uname, filepath, filesize, hash) VALUES (?, ?, ?, ?)
-            """
-    args = (uname, filepath, filesize, hash)
-    db.execute(query, args)
-
-
-def search_files(query_string: str, self_uname: str) -> list[FileSearchResult]:
-    query = """
-            SELECT uname, filepath, filesize, hash FROM files WHERE filepath LIKE ? AND uname != ?
-            """
-    args = ("%" + query_string + "%", self_uname)
-    db.execute(query, args)
-    return [FileSearchResult(*result) for result in db.fetchall()]
-
-
-def update_file_hash(uname: str, filepath: str, hash: str) -> None:
-    query = """
-            UPDATE files SET hash = ? WHERE uname = ? AND filepath = ?
-            """
-    args = (hash, uname, filepath)
-    db.execute(query, args)
 
 
 def receive_msg(client_socket: socket.socket) -> Message:
@@ -92,8 +47,8 @@ def receive_msg(client_socket: socket.socket) -> Message:
         )
     if message_type not in [
         HeaderCode.NEW_CONNECTION.value,
+        HeaderCode.REQUEST_IP.value,
         HeaderCode.REQUEST_UNAME.value,
-        HeaderCode.LOOKUP_ADDRESS.value,
         HeaderCode.SHARE_DATA.value,
         HeaderCode.FILE_SEARCH.value,
         HeaderCode.UPDATE_HASH.value,
@@ -166,13 +121,13 @@ def read_handler(notified_socket: socket.socket) -> None:
         try:
             request = receive_msg(notified_socket)
             match request["type"]:
-                case HeaderCode.REQUEST_UNAME:
+                case HeaderCode.REQUEST_IP:
                     response_data = uname_to_ip.get(request["query"].decode(FMT))
                     if response_data is not None:
                         if response_data != notified_socket.getpeername()[0]:
                             logging.debug(msg=f"Valid request: {response_data}")
                             data = response_data.encode(FMT)
-                            header = f"{HeaderCode.REQUEST_UNAME.value}{len(data):<{HEADER_MSG_LEN}}".encode(
+                            header = f"{HeaderCode.REQUEST_IP.value}{len(data):<{HEADER_MSG_LEN}}".encode(
                                 FMT
                             )
                             notified_socket.send(header + data)
@@ -186,13 +141,13 @@ def read_handler(notified_socket: socket.socket) -> None:
                             msg=f"Username {request['query'].decode(FMT)} not found",
                             code=ExceptionCode.NOT_FOUND,
                         )
-                case HeaderCode.LOOKUP_ADDRESS:
+                case HeaderCode.REQUEST_UNAME:
                     lookup_addr = request["query"].decode(FMT)
                     if lookup_addr != notified_socket.getpeername()[0]:
                         username = ip_to_uname.get(lookup_addr)
                         if username is not None:
                             username_bytes = username.encode(FMT)
-                            header = f"{HeaderCode.LOOKUP_ADDRESS.value}{len(username):<{HEADER_MSG_LEN}}".encode(
+                            header = f"{HeaderCode.REQUEST_UNAME.value}{len(username):<{HEADER_MSG_LEN}}".encode(
                                 FMT
                             )
                             notified_socket.send(header + username_bytes)
@@ -235,17 +190,13 @@ def read_handler(notified_socket: socket.socket) -> None:
                                 code=ExceptionCode.BAD_REQUEST,
                             )
                 case HeaderCode.SHARE_DATA:
-                    share_data: list[FileMetadata] = msgpack.unpackb(request["query"])
+                    share_data: list[DirData] = msgpack.unpackb(request["query"])
                     username = ip_to_uname.get(notified_socket.getpeername()[0])
+                    User = Query()
                     if username is not None:
-                        for file_data in share_data:
-                            insert_share_data(
-                                username,
-                                file_data["name"],
-                                file_data["size"],
-                                file_data.get("hash", None),
-                            )
-                        db_connection.commit()
+                        drizzle_db.upsert(
+                            {"uname": username, "share": share_data}, User.uname == username
+                        )
                     else:
                         raise RequestException(
                             msg=f"Username does not exist",
@@ -255,11 +206,20 @@ def read_handler(notified_socket: socket.socket) -> None:
                     update_hash_params: UpdateHashParams = msgpack.unpackb(request["query"])
                     username = ip_to_uname.get(notified_socket.getpeername()[0])
                     if username is not None:
-                        update_file_hash(
-                            username,
-                            update_hash_params["filepath"],
-                            update_hash_params["hash"],
-                        )
+                        User = Query()
+                        try:
+                            user_share = drizzle_db.search(User.uname == username)[0]["share"]
+                            update_file_hash(
+                                user_share,
+                                update_hash_params["filepath"],
+                                update_hash_params["hash"],
+                            )
+                            drizzle_db.update({"share": user_share}, User.uname == username)
+                        except IndexError:
+                            raise RequestException(
+                                msg=f"Username does not exist",
+                                code=ExceptionCode.NOT_FOUND,
+                            )
                     else:
                         raise RequestException(
                             msg=f"Username does not exist",
@@ -268,13 +228,14 @@ def read_handler(notified_socket: socket.socket) -> None:
                 case HeaderCode.FILE_SEARCH:
                     username = ip_to_uname.get(notified_socket.getpeername()[0])
                     if username is not None:
-                        search_result = search_files(request["query"].decode(FMT), username)
-                        logging.debug(f"{search_result}")
-                        search_result_bytes = msgpack.packb(search_result)
-                        search_result_header = f"{HeaderCode.FILE_SEARCH.value}{len(search_result_bytes):<{HEADER_MSG_LEN}}".encode(
+                        User = Query()
+                        browse_files: list[DBData] = drizzle_db.search(User.uname != username)
+                        logging.debug(f"{browse_files}")
+                        browse_files_bytes = msgpack.packb(browse_files)
+                        browse_files_header = f"{HeaderCode.FILE_SEARCH.value}{len(browse_files_bytes):<{HEADER_MSG_LEN}}".encode(
                             FMT
                         )
-                        notified_socket.send(search_result_header + search_result_bytes)
+                        notified_socket.send(browse_files_header + browse_files_bytes)
                     else:
                         raise RequestException(
                             msg=f"Username does not exist",
@@ -309,6 +270,6 @@ while True:
     read_sockets: list[socket.socket]
     exception_sockets: list[socket.socket]
 
-    read_sockets, _, exception_sockets = select.select(sockets_list, [], sockets_list)
+    read_sockets, _, exception_sockets = select.select(sockets_list, [], sockets_list, 0.1)
     for notified_socket in read_sockets:
         read_handler(notified_socket)
