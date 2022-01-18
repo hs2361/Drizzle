@@ -8,6 +8,7 @@ import signal
 import socket
 import sys
 import threading
+from concurrent.futures import ALL_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 import msgpack
@@ -31,6 +32,7 @@ from utils.helpers import (
     display_share_dict,
     find_file,
     get_file_hash,
+    get_files_in_dir,
     get_unique_filename,
     path_to_dict,
 )
@@ -105,7 +107,9 @@ def request_file(file_requested: DirData, client_peer_socket: socket.socket) -> 
                         write_path: Path = get_unique_filename(
                             RECV_FOLDER_PATH / file_header["name"]
                         )
+
                         try:
+                            write_path.parent.mkdir(parents=True, exist_ok=True)
                             file_to_write = write_path.open("wb")
                             logging.debug(f"Creating and writing to {write_path}")
                             try:
@@ -185,7 +189,6 @@ def send_handler() -> None:
         )
         recipient_prompt: PromptSession = PromptSession("Enter username :")
         search_prompt: PromptSession = PromptSession("Enter search term :")
-
         while True:
             mode = mode_prompt.prompt()
             match mode:
@@ -265,21 +268,37 @@ def send_handler() -> None:
                             response_length = int(
                                 client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip()
                             )
-                            response = client_send_socket.recv(response_length)
+                            peer_ip_bytes: bytes = client_send_socket.recv(response_length)
 
                             if res_type == HeaderCode.REQUEST_IP.value:
-                                client_peer_socket = socket.socket(
-                                    socket.AF_INET, socket.SOCK_STREAM
-                                )
-                                client_peer_socket.connect((response.decode(FMT), CLIENT_RECV_PORT))
-                                req_file_thread = threading.Thread(
-                                    target=request_file,
-                                    args=(
-                                        file_item,
-                                        client_peer_socket,
-                                    ),
-                                )
-                                req_file_thread.start()
+                                peer_ip: str = peer_ip_bytes.decode(FMT)
+
+                                with ThreadPoolExecutor() as executor:
+                                    if file_item["type"] == "file":
+                                        executor.submit(
+                                            req_file_worker,
+                                            file_item,
+                                            peer_ip,
+                                        )
+                                        # req_file_thread = threading.Thread(
+                                        #     target=req_file_worker,
+                                        #     args=(
+                                        #         file_item,
+                                        #         peer_ip,
+                                        #     ),
+                                        # )
+                                        # req_file_thread.start()
+                                    else:
+                                        files_to_request: list[DirData] = []
+                                        get_files_in_dir(
+                                            file_item["children"],
+                                            files_to_request,
+                                        )
+                                        futures = executor.map(
+                                            req_file_worker,
+                                            files_to_request,
+                                            [peer_ip] * len(files_to_request),
+                                        )
                             elif res_type == HeaderCode.ERROR.value:
                                 res_len = int(
                                     client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip()
@@ -312,10 +331,10 @@ def send_handler() -> None:
                         response_length = int(
                             client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip()
                         )
-                        response = client_send_socket.recv(response_length)
+                        peer_ip = client_send_socket.recv(response_length)
 
                         if res_type == HeaderCode.REQUEST_IP.value:
-                            recipient_addr: str = response.decode(FMT)
+                            recipient_addr: str = peer_ip.decode(FMT)
                             logging.debug(msg=f"Response: {recipient_addr}")
                             client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                             client_peer_socket.connect((recipient_addr, CLIENT_RECV_PORT))
@@ -399,7 +418,7 @@ def send_handler() -> None:
                                         client_peer_socket.send(header + msg)
                         elif res_type == HeaderCode.ERROR.value:
                             err: RequestException = msgpack.unpackb(
-                                response,
+                                peer_ip,
                                 object_hook=RequestException.from_dict,
                                 raw=False,
                             )
@@ -411,6 +430,33 @@ def send_handler() -> None:
                         os._exit(0)
                     else:
                         os.kill(os.getpid(), signal.SIGINT)
+
+
+def req_file_thread_target(file_item, peer_ip):
+    try:
+        with ThreadPoolExecutor() as executor:
+            files_to_request: list[DirData] = []
+            get_files_in_dir(
+                file_item["children"],
+                files_to_request,
+            )
+            futures = executor.map(
+                req_file_worker,
+                files_to_request,
+                [peer_ip] * len(files_to_request),
+            )
+            wait(futures, return_when=ALL_COMPLETED)
+            # executor.shutdown(wait=True)
+            # for file in files_to_request:
+            #     executor.submit(req_file_worker, file, peer_ip)
+    except Exception as e:
+        logging.error(e.with_traceback(e.__traceback__))
+
+
+def req_file_worker(file_item: DirData, peer_ip: str):
+    client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    client_peer_socket.connect((peer_ip, CLIENT_RECV_PORT))
+    request_file(file_item, client_peer_socket)
 
 
 def send_file(filepath: Path, requester: tuple[str, int], request_hash: bool) -> None:
@@ -432,7 +478,7 @@ def send_file(filepath: Path, requester: tuple[str, int], request_hash: bool) ->
         hash = get_file_hash(str(filepath))
 
     filemetadata: FileMetadata = {
-        "name": filepath.name,
+        "name": str(filepath).removeprefix(str(SHARE_FOLDER_PATH) + "/"),
         "size": filepath.stat().st_size,
         "hash": hash if request_hash else None,
         # "compression": compression,
@@ -652,18 +698,20 @@ if __name__ == "__main__":
                 client_send_socket.close()
                 client_recv_socket.close()
                 sys.exit(1)
-
         print("Successfully registered")
         share_data = msgpack.packb(path_to_dict(SHARE_FOLDER_PATH)["children"])
         share_data_header = (
             f"{HeaderCode.SHARE_DATA.value}{len(share_data):<{HEADER_MSG_LEN}}".encode(FMT)
         )
-        client_send_socket.send(share_data_header + share_data)
+        client_send_socket.sendall(share_data_header + share_data)
+
         threading.excepthook = excepthook
         send_thread = threading.Thread(target=send_handler)
         receive_thread = threading.Thread(target=receive_handler)
         send_thread.start()
         receive_thread.start()
+        send_thread.join()
+        receive_thread.join()
     except (KeyboardInterrupt, EOFError, SystemExit):
         sys.exit(0)
     except:

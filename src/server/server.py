@@ -62,7 +62,7 @@ def receive_msg(client_socket: socket.socket) -> Message:
         message_len = int(client_socket.recv(HEADER_MSG_LEN).decode(FMT))
         query = client_socket.recv(message_len)
         logging.debug(
-            msg=f"Received packet: TYPE {message_type} QUERY {query!r} from {client_socket.getpeername()}"
+            msg=f"Received packet: TYPE {message_type} LEN {message_len} QUERY query!r from {client_socket.getpeername()}"
         )
         return {"type": HeaderCode(message_type), "query": query}
 
@@ -195,7 +195,8 @@ def read_handler(notified_socket: socket.socket) -> None:
                     User = Query()
                     if username is not None:
                         drizzle_db.upsert(
-                            {"uname": username, "share": share_data}, User.uname == username
+                            {"uname": username, "share": share_data},
+                            User.uname == username,
                         )
                     else:
                         raise RequestException(

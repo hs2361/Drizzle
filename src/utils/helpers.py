@@ -27,6 +27,16 @@ def path_to_dict(path: Path) -> DirData:
     return d
 
 
+def get_files_in_dir(dir: list[DirData] | None, files: list[DirData]):
+    if dir is None:
+        return
+    for item in dir:
+        if item["type"] == "file":
+            files.append(item)
+        else:
+            get_files_in_dir(item["children"], files)
+
+
 def display_share_dict(share: list[DirData] | None, indents: int = 0):
     if share is None:
         return

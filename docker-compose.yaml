@@ -9,6 +9,7 @@ services:
       - lan
     volumes:
       - ./logs:/logs:rw
+      - ./db:/Drizzle/db:rw
 
   client:
     build:
