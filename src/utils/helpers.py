@@ -3,8 +3,8 @@ import logging
 import os
 from pathlib import Path
 
-from utils.constants import HASH_BUFFER_LEN, RECV_FOLDER_PATH, SHARE_FOLDER_PATH
-from utils.types import CompressionMethod, DirData, FileMetadata
+from utils.constants import HASH_BUFFER_LEN, RECV_FOLDER_PATH, SHARE_FOLDER_PATH, TEMP_FOLDER_PATH
+from utils.types import CompressionMethod, DirData, FileMetadata, TransferProgress, TransferStatus
 
 
 def path_to_dict(path: Path) -> DirData:
@@ -87,7 +87,14 @@ def get_sharable_files() -> list[FileMetadata]:
     for (root, _, files) in os.walk(str(SHARE_FOLDER_PATH)):
         for f in files:
             fname = Path(root).joinpath(f)
-            shareable_files.append({"name": str(fname), "size": fname.stat().st_size})
+            shareable_files.append(
+                {
+                    "path": str(fname),
+                    "size": fname.stat().st_size,
+                    "hash": None,
+                    "compression": CompressionMethod.NONE,
+                }
+            )
     return shareable_files
 
 
@@ -101,3 +108,13 @@ def get_unique_filename(path: Path) -> Path:
 
     logging.debug(f"unique file name is {path}")
     return path
+
+
+def get_pending_downloads(transfer_progress: dict[Path, TransferProgress]) -> str:
+    return "\n".join(
+        [
+            f"{str(file).removeprefix(str(TEMP_FOLDER_PATH) + '/')}: {progress['status'].name}"
+            for (file, progress) in transfer_progress.items()
+            if progress["status"] in [TransferStatus.DOWNLOADING, TransferStatus.PAUSED]
+        ]
+    )

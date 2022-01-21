@@ -4,7 +4,14 @@ repos:
     hooks:
       - id: isort
         stages: [commit]
-        args: ["--line-length", "100", "--multi-line", "3", "--profile", "black"]
+        args:
+          ["--line-length", "100", "--multi-line", "3", "--profile", "black"]
+        require_serial: true
+        language: python
+        language_version: python3
+        types_or: [cython, pyi, python]
+        minimum_pre_commit_version: "2.9.2"
+        additional_dependencies: ["isort==5.10.1"]
   - repo: https://github.com/myint/autoflake
     rev: v1.4
     hooks:

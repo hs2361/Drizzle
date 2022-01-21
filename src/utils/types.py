@@ -20,13 +20,25 @@ class CompressionMethod(Enum):
     ZSTD = 1
 
 
+class TransferStatus(Enum):
+    DOWNLOADING = 1
+    PAUSED = 2
+    COMPLETED = 3
+    FAILED = 4
+
+
+class TransferProgress(TypedDict):
+    status: TransferStatus
+    progress: int
+
+
 class Message(TypedDict):
     type: HeaderCode
     query: bytes
 
 
 class FileMetadata(TypedDict):
-    name: str
+    path: str
     size: int
     hash: str | None
     compression: CompressionMethod
@@ -36,6 +48,7 @@ class FileRequest(TypedDict):
     filepath: str
     port: int
     request_hash: bool
+    resume_offset: int
 
 
 class FileSearchResult(NamedTuple):
@@ -63,22 +76,3 @@ class UpdateHashParams(TypedDict):
 class DBData(TypedDict):
     uname: str
     share: list[DirData]
-
-
-"""
-share: [
-    file1,
-    file2,
-    {
-        folder1: [
-            file3,
-            {
-                folder3: [
-                    file4
-                ]
-            }
-        ],
-        folder2: []
-    }
-]
-"""
