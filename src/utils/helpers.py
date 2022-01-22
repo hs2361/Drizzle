@@ -7,6 +7,18 @@ from utils.constants import HASH_BUFFER_LEN, RECV_FOLDER_PATH, SHARE_FOLDER_PATH
 from utils.types import CompressionMethod, DirData, FileMetadata, TransferProgress, TransferStatus
 
 
+def generate_transfer_progress() -> dict[Path, TransferProgress]:
+    transfer_progress: dict[Path, TransferProgress] = {}
+    for root, _, files in os.walk(str(TEMP_FOLDER_PATH)):
+        for file in files:
+            path = Path(root).joinpath(file)
+            transfer_progress[path] = {
+                "progress": path.stat().st_size,
+                "status": TransferStatus.PAUSED,
+            }
+    return transfer_progress
+
+
 def path_to_dict(path: Path) -> DirData:
     d: DirData = {
         "path": str(path).removeprefix(str(SHARE_FOLDER_PATH) + "/"),

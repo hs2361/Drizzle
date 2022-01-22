@@ -26,6 +26,7 @@ services:
       - ./logs:/logs:rw
       - ./downloads:/Drizzle/downloads:rw
       - ./tmp:/Drizzle/tmp:rw
+      - ./db:/Drizzle/db:rw
 
 networks:
   lan:

@@ -1,9 +1,3 @@
 #!/bin/bash
-rm -rf logs
-rm -rf downloads
-rm -rf tmp
-rm -rf db
-mkdir logs
-mkdir downloads
-mkdir tmp
-mkdir db
+rm -rf logs downloads tmp db
+mkdir logs downloads tmp db
