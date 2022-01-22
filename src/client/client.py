@@ -75,13 +75,13 @@ client_send_socket.connect((SERVER_IP, SERVER_RECV_PORT))
 client_recv_socket.listen(5)
 connected = [client_recv_socket]
 transfer_progress: dict[Path, TransferProgress] = {}
-my_username = ""
+username = ""
 
 
 def prompt_username() -> str:
-    global my_username
-    my_username = input("Enter username: ")
-    username = my_username.encode(FMT)
+    global username
+    username = input("Enter username: ")
+    username = username.encode(FMT)
     username_header = f"{HeaderCode.NEW_CONNECTION.value}{len(username):<{HEADER_MSG_LEN}}".encode(
         FMT
     )
@@ -90,7 +90,9 @@ def prompt_username() -> str:
     return type
 
 
-def request_file(file_requested: DirData, uname: str, client_peer_socket: socket.socket) -> str:
+def request_file(
+    file_requested: DirData, uname: str, client_peer_socket: socket.socket, progress_bar: tqdm.tqdm
+) -> str:
     global transfer_progress
     file_recv_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     file_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -145,62 +147,51 @@ def request_file(file_requested: DirData, uname: str, client_peer_socket: socket
                             try:
                                 byte_count = 0
                                 hash = hashlib.sha1()
-                                with tqdm.tqdm(
-                                    total=file_header["size"] - offset,
-                                    desc=f"Receiving {file_header['path']}",
-                                    unit="B",
-                                    unit_scale=True,
-                                    unit_divisor=1024,
-                                ) as progress:
+                                transfer_progress[temp_path]["status"] = TransferStatus.DOWNLOADING
+                                while True:
+                                    if (
+                                        transfer_progress[temp_path]["status"]
+                                        == TransferStatus.PAUSED
+                                    ):
+                                        file_to_write.close()
+                                        file_recv_socket.close()
+                                        return f"Download for file {file_header['path']} was paused"
+                                    file_bytes_read: bytes = sender.recv(FILE_BUFFER_LEN)
+                                    if not offset:
+                                        hash.update(file_bytes_read)
+                                    num_bytes_read = len(file_bytes_read)
+                                    byte_count += num_bytes_read
+                                    transfer_progress[temp_path]["progress"] = byte_count
+                                    file_to_write.write(file_bytes_read)
+                                    progress_bar.update(num_bytes_read)
+                                    logging.debug(
+                                        msg=f"Received chunk of size {num_bytes_read}, received {byte_count} of {file_header['size']}"
+                                    )
+                                    if num_bytes_read == 0:
+                                        break
+
+                                hash_str = ""
+                                if offset:
+                                    file_to_write.seek(0)
+                                    hash_str = get_file_hash(str(temp_path))
+                                file_to_write.close()
+
+                                received_hash = hash.hexdigest() if not offset else hash_str
+                                if (request_hash and received_hash == file_header["hash"]) or (
+                                    received_hash == file_requested["hash"]
+                                ):
                                     transfer_progress[temp_path][
                                         "status"
-                                    ] = TransferStatus.DOWNLOADING
-                                    while True:
-                                        if (
-                                            transfer_progress[temp_path]["status"]
-                                            == TransferStatus.PAUSED
-                                        ):
-                                            file_to_write.close()
-                                            file_recv_socket.close()
-                                            return f"Download for file {file_header['path']} was paused"
-                                        file_bytes_read: bytes = sender.recv(FILE_BUFFER_LEN)
-                                        if not offset:
-                                            hash.update(file_bytes_read)
-                                        num_bytes_read = len(file_bytes_read)
-                                        byte_count += num_bytes_read
-                                        transfer_progress[temp_path]["progress"] = byte_count
-                                        file_to_write.write(file_bytes_read)
-                                        progress.update(num_bytes_read)
-                                        logging.debug(
-                                            msg=f"Received chunk of size {num_bytes_read}, received {byte_count} of {file_header['size']}"
-                                        )
-                                        if num_bytes_read == 0:
-                                            break
-
-                                    hash_str = ""
-                                    if offset:
-                                        file_to_write.seek(0)
-                                        hash_str = get_file_hash(str(temp_path))
-                                    file_to_write.close()
-
-                                    received_hash = hash.hexdigest() if not offset else hash_str
-                                    if (request_hash and received_hash == file_header["hash"]) or (
-                                        received_hash == file_requested["hash"]
-                                    ):
-                                        transfer_progress[temp_path][
-                                            "status"
-                                        ] = TransferStatus.COMPLETED
-                                        final_download_path.parent.mkdir(
-                                            parents=True, exist_ok=True
-                                        )
-                                        shutil.move(temp_path, final_download_path)
-                                        return "Succesfully received 1 file"
-                                    else:
-                                        transfer_progress[temp_path] = TransferStatus.FAILED
-                                        logging.error(
-                                            msg=f"Failed integrity check for file {file_header['path']}"
-                                        )
-                                        return "Integrity check failed"
+                                    ] = TransferStatus.COMPLETED
+                                    final_download_path.parent.mkdir(parents=True, exist_ok=True)
+                                    shutil.move(temp_path, final_download_path)
+                                    return "Succesfully received 1 file"
+                                else:
+                                    transfer_progress[temp_path] = TransferStatus.FAILED
+                                    logging.error(
+                                        msg=f"Failed integrity check for file {file_header['path']}"
+                                    )
+                                    return "Integrity check failed"
                             except Exception as e:
                                 logging.error(e, exc_info=True)
                                 return "File received but failed to save"
@@ -318,11 +309,19 @@ def send_handler() -> None:
                             if peer_ip is not None:
                                 executor = ThreadPoolExecutor()
                                 if file_item["type"] == "file":
+                                    progress_bar = tqdm.tqdm(
+                                        total=file_item["size"],
+                                        desc=f"Downloading {file_item['name']}",
+                                        unit="B",
+                                        unit_scale=True,
+                                        unit_divisor=1024,
+                                    )
                                     executor.submit(
                                         req_file_worker,
                                         file_item,
                                         selected_user["uname"],
                                         peer_ip,
+                                        progress_bar,
                                     )
                                 else:
                                     files_to_request: list[DirData] = []
@@ -330,11 +329,20 @@ def send_handler() -> None:
                                         file_item["children"],
                                         files_to_request,
                                     )
+                                    total_size = sum([file["size"] for file in files_to_request])
+                                    progress_bar = tqdm.tqdm(
+                                        total=total_size,
+                                        desc=f"Downloading {file_item['name']}",
+                                        unit="B",
+                                        unit_scale=True,
+                                        unit_divisor=1024,
+                                    )
                                     executor.map(
                                         req_file_worker,
                                         files_to_request,
                                         [selected_user["uname"]] * len(files_to_request),
                                         [peer_ip] * len(files_to_request),
+                                        [progress_bar] * len(files_to_request),
                                     )
                             else:
                                 print(f"No user found with username {selected_user['uname']}")
@@ -479,11 +487,15 @@ def send_handler() -> None:
                                     }
                                     if peer_ip is not None:
                                         executor = ThreadPoolExecutor()
+                                        progress_bar = tqdm.tqdm(
+                                            total=file_item["size"],
+                                            desc=f"Downloading {file_item['name']}",
+                                            unit="B",
+                                            unit_scale=True,
+                                            unit_divisor=1024,
+                                        )
                                         executor.submit(
-                                            req_file_worker,
-                                            file_item,
-                                            uname,
-                                            peer_ip,
+                                            req_file_worker, file_item, uname, peer_ip, progress_bar
                                         )
                                     else:
                                         print(f"User with username {uname} not found")
@@ -522,11 +534,21 @@ def send_handler() -> None:
                                                 "status"
                                             ] = TransferStatus.PAUSED
                                             print(f"Paused transfer for file {str(pathname)}")
+
+                                total_size = sum([file["size"] for file in paused_dir_files])
+                                progress_bar = tqdm.tqdm(
+                                    total=total_size,
+                                    desc=f"Downloading {path.name}",
+                                    unit="B",
+                                    unit_scale=True,
+                                    unit_divisor=1024,
+                                )
                                 executor.map(
                                     req_file_worker,
                                     paused_dir_files,
                                     [uname] * len(paused_dir_files),
                                     [peer_ip] * len(paused_dir_files),
+                                    [progress_bar] * len(paused_dir_files),
                                 )
                         else:
                             print("File does not exist")
@@ -537,28 +559,10 @@ def send_handler() -> None:
                         os.kill(os.getpid(), signal.SIGINT)
 
 
-def req_file_thread_target(file_item, peer_ip):
-    try:
-        with ThreadPoolExecutor() as executor:
-            files_to_request: list[DirData] = []
-            get_files_in_dir(
-                file_item["children"],
-                files_to_request,
-            )
-            futures = executor.map(
-                req_file_worker,
-                files_to_request,
-                [peer_ip] * len(files_to_request),
-            )
-            # wait(futures, return_when=ALL_COMPLETED)
-    except Exception as e:
-        logging.error(e.with_traceback(e.__traceback__))
-
-
-def req_file_worker(file_item: DirData, uname: str, peer_ip: str):
+def req_file_worker(file_item: DirData, uname: str, peer_ip: str, progress_bar: tqdm.tqdm):
     client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     client_peer_socket.connect((peer_ip, CLIENT_RECV_PORT))
-    request_file(file_item, uname, client_peer_socket)
+    request_file(file_item, uname, client_peer_socket, progress_bar)
 
 
 def send_file(
@@ -612,7 +616,7 @@ def send_file(
             total_bytes_read = 0
             file_to_send.seek(resume_offset)
             while total_bytes_read != filemetadata["size"] - resume_offset:
-                time.sleep(0.05)
+                # time.sleep(0.05)
                 bytes_read = file_to_send.read(FILE_BUFFER_LEN)
                 num_bytes = file_send_socket.send(bytes_read)
                 total_bytes_read += num_bytes
@@ -638,6 +642,8 @@ def send_file(
             client_send_socket.send(update_hash_header + update_hash_bytes)
     except Exception as e:
         logging.error(f"File Sending failed: {e}")
+    # finally:
+    #     concurrent_send_count -= 1
 
 
 def receive_msg(socket: socket.socket) -> str:
@@ -815,9 +821,7 @@ if __name__ == "__main__":
         )
         client_send_socket.sendall(share_data_header + share_data)
         try:
-            with open(
-                f"/Drizzle/db/{my_username}_transfer_progress.obj", mode="rb"
-            ) as transfer_dump:
+            with open(f"/Drizzle/db/{username}_transfer_progress.obj", mode="rb") as transfer_dump:
                 transfer_dump.seek(0)
                 transfer_progress = pickle.load(transfer_dump)
                 logging.debug(
@@ -835,7 +839,7 @@ if __name__ == "__main__":
         receive_thread.start()
         send_thread.join()
     except (KeyboardInterrupt, EOFError, SystemExit):
-        with open(f"/Drizzle/db/{my_username}_transfer_progress.obj", mode="wb") as transfer_dump:
+        with open(f"/Drizzle/db/{username}_transfer_progress.obj", mode="wb") as transfer_dump:
             pickle.dump(transfer_progress, transfer_dump)
         sys.exit(0)
     except:
