@@ -7,7 +7,9 @@ class ExceptionCode(IntEnum):
     DISCONNECT = 1
     INVALID_HEADER = 2
     NOT_FOUND = 3
-    USER_EXISTS = 3
+    USER_EXISTS = 4
+    UNAUTHORIZED = 5
+    INCOMPLETE = 6
 
 
 class RequestExceptionDict(TypedDict):

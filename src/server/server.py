@@ -73,41 +73,41 @@ def read_handler(notified_socket: socket.socket) -> None:
     if notified_socket == server_socket:
         client_socket, client_addr = server_socket.accept()
         try:
-            userdata = receive_msg(client_socket)
-            uname = userdata["query"].decode(FMT)
+            # userdata = receive_msg(client_socket)
+            # uname = userdata["query"].decode(FMT)
             sockets_list.append(client_socket)
-            if userdata["type"] == HeaderCode.NEW_CONNECTION:
-                addr = uname_to_ip.get(uname)
-                logging.debug(
-                    msg=f"Registration request for username {uname} from address {client_addr}"
-                )
-                if addr is None:
-                    uname_to_ip[uname] = client_addr[0]
-                    ip_to_uname[client_addr[0]] = uname
-                    logging.debug(
-                        msg=(
-                            "Accepted new connection from"
-                            f" {client_addr[0]}:{client_addr[1]}"
-                            f" username: {userdata['query'].decode(FMT)}"
-                        )
-                    )
-                    client_socket.send(f"{HeaderCode.NEW_CONNECTION.value}".encode(FMT))
-                else:
-                    if addr != client_addr[0]:
-                        raise RequestException(
-                            msg=f"User with username {addr} already exists",
-                            code=ExceptionCode.USER_EXISTS,
-                        )
-                    else:
-                        raise RequestException(
-                            msg="Cannot re-register user for same address",
-                            code=ExceptionCode.BAD_REQUEST,
-                        )
-            else:
-                raise RequestException(
-                    msg=f"Bad request from {client_addr}",
-                    code=ExceptionCode.BAD_REQUEST,
-                )
+            # if userdata["type"] == HeaderCode.NEW_CONNECTION:
+            #     addr = uname_to_ip.get(uname)
+            #     logging.debug(
+            #         msg=f"Registration request for username {uname} from address {client_addr}"
+            #     )
+            #     if addr is None:
+            #         uname_to_ip[uname] = client_addr[0]
+            #         ip_to_uname[client_addr[0]] = uname
+            #         logging.debug(
+            #             msg=(
+            #                 "Accepted new connection from"
+            #                 f" {client_addr[0]}:{client_addr[1]}"
+            #                 f" username: {userdata['query'].decode(FMT)}"
+            #             )
+            #         )
+            #         client_socket.send(f"{HeaderCode.NEW_CONNECTION.value}".encode(FMT))
+            #     else:
+            #         if addr != client_addr[0]:
+            #             raise RequestException(
+            #                 msg=f"User with username {addr} already exists",
+            #                 code=ExceptionCode.USER_EXISTS,
+            #             )
+            #         else:
+            #             raise RequestException(
+            #                 msg="Cannot re-register user for same address",
+            #                 code=ExceptionCode.BAD_REQUEST,
+            #             )
+            # else:
+            #     raise RequestException(
+            #         msg=f"Bad request from {client_addr}",
+            #         code=ExceptionCode.BAD_REQUEST,
+            #     )
         except RequestException as e:
             if e.code != ExceptionCode.DISCONNECT:
                 data: bytes = msgpack.packb(e, default=RequestException.to_dict, use_bin_type=True)
@@ -120,6 +120,40 @@ def read_handler(notified_socket: socket.socket) -> None:
     else:
         try:
             request = receive_msg(notified_socket)
+            client_addr = notified_socket.getpeername()
+            if ip_to_uname.get(notified_socket.getpeername()[0]) is None:
+                if request["type"] != HeaderCode.NEW_CONNECTION:
+                    raise RequestException(
+                        msg=f"User at {client_addr} not registered", code=ExceptionCode.UNAUTHORIZED
+                    )
+                uname = request["query"].decode(FMT)
+                addr = uname_to_ip.get(uname)
+                logging.debug(
+                    msg=f"Registration request for username {uname} from address {client_addr}"
+                )
+                if addr is None:
+                    uname_to_ip[uname] = client_addr[0]
+                    ip_to_uname[client_addr[0]] = uname
+                    logging.debug(
+                        msg=(
+                            "Accepted new connection from"
+                            f" {client_addr[0]}:{client_addr[1]}"
+                            f" username: {request['query'].decode(FMT)}"
+                        )
+                    )
+                    notified_socket.send(f"{HeaderCode.NEW_CONNECTION.value}".encode(FMT))
+                else:
+                    if addr != client_addr[0]:
+                        raise RequestException(
+                            msg=f"User with username {addr} already exists",
+                            code=ExceptionCode.USER_EXISTS,
+                        )
+                    else:
+                        raise RequestException(
+                            msg="Cannot re-register user for same address",
+                            code=ExceptionCode.BAD_REQUEST,
+                        )
+                return
             match request["type"]:
                 case HeaderCode.REQUEST_IP:
                     response_data = uname_to_ip.get(request["query"].decode(FMT))
@@ -249,7 +283,7 @@ def read_handler(notified_socket: socket.socket) -> None:
                     )
         except TypeError as e:
             logging.error(msg=e)
-            sys.exit(0)
+            # sys.exit(0)
         except RequestException as e:
             if e.code == ExceptionCode.DISCONNECT:
                 try:
@@ -273,4 +307,6 @@ while True:
 
     read_sockets, _, exception_sockets = select.select(sockets_list, [], sockets_list, 0.1)
     for notified_socket in read_sockets:
+        # read_thread = threading.Thread(target=read_handler, args=(notified_socket,))
+        # read_thread.start()
         read_handler(notified_socket)
