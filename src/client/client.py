@@ -16,7 +16,7 @@ from pprint import pformat
 
 import msgpack
 import tqdm
-from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.patch_stdout import StdoutProxy
 from prompt_toolkit.shortcuts import PromptSession
 
 from utils.constants import (
@@ -233,7 +233,7 @@ def request_file(
 
 def send_handler() -> None:
     global client_send_socket
-    with patch_stdout():
+    with StdoutProxy(sleep_between_writes=0):
         mode_prompt: PromptSession = PromptSession(
             "\nMODE : \n1. Browse files\n2. Send message\n3. Pause/resume downloads\n4. Exit\n"
         )
