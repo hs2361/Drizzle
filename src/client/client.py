@@ -1,4 +1,3 @@
-import datetime
 import hashlib
 import logging
 import os
@@ -96,18 +95,20 @@ def send_heartbeat() -> None:
     global client_send_socket
     global uname_to_status
     heartbeat = HeaderCode.HEARTBEAT_REQUEST.value.encode(FMT)
-    client_send_socket.send(heartbeat)
+    while True:
+        time.sleep(HEARTBEAT_TIMER)
+        client_send_socket.send(heartbeat)
+        type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
 
-    type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
-    if type == HeaderCode.HEARTBEAT_REQUEST.value:
-        length = int(client_send_socket.recv((HEADER_MSG_LEN)).decode(FMT))
-        uname_to_status = msgpack.unpackb(client_send_socket.recv(length))
+        if type == HeaderCode.HEARTBEAT_REQUEST.value:
+            length = int(client_send_socket.recv((HEADER_MSG_LEN)).decode(FMT))
+            uname_to_status = msgpack.unpackb(client_send_socket.recv(length))
 
-    else:
-        raise RequestException(
-            f"Server sent invalid message type in header: {type}",
-            ExceptionCode.INVALID_HEADER,
-        )
+        else:
+            raise RequestException(
+                f"Server sent invalid message type in header: {type}",
+                ExceptionCode.INVALID_HEADER,
+            )
 
 
 def prompt_username() -> str:
@@ -600,13 +601,11 @@ def send_handler() -> None:
             case "4":
                 for uname, last_active in uname_to_status.items():
                     if time.time() - last_active <= ONLINE_TIMEOUT:
-                        print(f"{uname} :\t Online")
-
+                        print(f"{uname}: Online")
                     else:
-
-                        timestamp = datetime.datetime.fromtimestamp(last_active)
+                        timestamp = time.localtime(last_active)
                         print(
-                            f"{uname} :\t Offline (Last active : {timestamp.strftime('%d-%m-%Y %H:%M:%S')}"
+                            f"{uname}: Offline (Last active : {time.strftime('%d-%m-%Y %H:%M:%S', timestamp)})"
                         )
 
             case _:
@@ -897,8 +896,7 @@ if __name__ == "__main__":
             threading.excepthook = excepthook
             send_thread = threading.Thread(target=send_handler)
             receive_thread = threading.Thread(target=receive_handler)
-            heartbeat_thread = threading.Timer(HEARTBEAT_TIMER, target=send_heartbeat)
-
+            heartbeat_thread = threading.Thread(target=send_heartbeat)
             send_thread.start()
             receive_thread.start()
             heartbeat_thread.start()
