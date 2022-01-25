@@ -3,7 +3,6 @@ from typing import NamedTuple, TypedDict
 
 
 class HeaderCode(Enum):
-
     ERROR = "e"
     FILE = "f"
     FILE_REQUEST = "F"
@@ -15,6 +14,7 @@ class HeaderCode(Enum):
     REQUEST_IP = "r"
     SHARE_DATA = "d"
     UPDATE_HASH = "h"
+    UPDATE_SHARE_DATA = "D"
 
 
 class CompressionMethod(Enum):

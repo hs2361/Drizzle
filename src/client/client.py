@@ -673,7 +673,7 @@ def send_file(
             total_bytes_read = 0
             file_to_send.seek(resume_offset)
             while total_bytes_read != filemetadata["size"] - resume_offset:
-                # time.sleep(0.05)
+                time.sleep(0.05)
                 bytes_read = file_to_send.read(FILE_BUFFER_LEN)
                 num_bytes = file_send_socket.send(bytes_read)
                 total_bytes_read += num_bytes
@@ -704,6 +704,7 @@ def send_file(
 
 
 def receive_msg(socket: socket.socket) -> str:
+    global client_send_socket
     logging.debug(f"Receiving from {socket.getpeername()}")
     message_type = socket.recv(HEADER_TYPE_LEN).decode(FMT)
     if not len(message_type):
@@ -771,8 +772,20 @@ def receive_msg(socket: socket.socket) -> str:
                     )
                     send_file_thread.start()
                     return "File requested by user"
+                elif requested_file_path.is_dir():
+                    raise RequestException(
+                        f"Requested a directory, {file_req_header['filepath']} is not a file.",
+                        ExceptionCode.BAD_REQUEST,
+                    )
                 else:
                     # TODO: Update file info on server
+                    share_data = msgpack.packb(path_to_dict(SHARE_FOLDER_PATH)["children"])
+                    share_data_header = (
+                        f"{HeaderCode.SHARE_DATA.value}{len(share_data):<{HEADER_MSG_LEN}}".encode(
+                            FMT
+                        )
+                    )
+                    client_send_socket.sendall(share_data_header + share_data)
                     raise RequestException(
                         f"Requested file {file_req_header['filepath']} is not available",
                         ExceptionCode.NOT_FOUND,
