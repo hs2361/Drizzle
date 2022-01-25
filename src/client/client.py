@@ -1,11 +1,9 @@
 import hashlib
 import logging
-import os
 import pickle
 import re
 import select
 import shutil
-import signal
 import socket
 import sys
 import threading
@@ -127,6 +125,7 @@ def request_file(
     file_requested: DirData, uname: str, client_peer_socket: socket.socket, progress_bar: tqdm.tqdm
 ) -> str:
     global transfer_progress
+    logging.debug(f"Requesting file, progress is {transfer_progress}")
     file_recv_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     file_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     file_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
@@ -175,12 +174,23 @@ def request_file(
                         try:
                             temp_path.parent.mkdir(parents=True, exist_ok=True)
                             file_to_write = temp_path.open("ab")
-                            transfer_progress[temp_path] = {}
+                            # transfer_progress[temp_path] = {}
                             logging.debug(f"Creating and writing to {temp_path}")
                             try:
                                 byte_count = 0
                                 hash = hashlib.sha1()
-                                transfer_progress[temp_path]["status"] = TransferStatus.DOWNLOADING
+                                logging.debug(
+                                    msg=f"transfer progress for {str(temp_path)} is {transfer_progress[temp_path]}"
+                                )
+                                if (
+                                    transfer_progress[temp_path].get(
+                                        "status", TransferStatus.NEVER_STARTED
+                                    )
+                                    != TransferStatus.PAUSED
+                                ):
+                                    transfer_progress[temp_path][
+                                        "status"
+                                    ] = TransferStatus.DOWNLOADING
                                 while True:
                                     if (
                                         transfer_progress[temp_path]["status"]
@@ -266,9 +276,10 @@ def request_file(
 
 def send_handler() -> None:
     global client_send_socket
+    global transfer_progress
     # with StdoutProxy(sleep_between_writes=0):
     mode_prompt: PromptSession = PromptSession(
-        "\nMODE: \n1. Browse files\n2. Send message\n3. Pause/resume downloads\n4.View online peers\n5. Exit\nEnter Mode: "
+        "\nMODE: \n1. Browse files\n2. Send message\n3. Pause/resume downloads\n4. View online peers\n0. Exit\nEnter Mode: "
     )
     recipient_prompt: PromptSession = PromptSession("Enter username: ")
     while True:
@@ -338,7 +349,7 @@ def send_handler() -> None:
                         peer_ip = request_ip(selected_user["uname"], client_send_socket)
 
                         if peer_ip is not None:
-                            executor = ThreadPoolExecutor()
+                            executor = ThreadPoolExecutor(2)
                             if file_item["type"] == "file":
                                 progress_bar = tqdm.tqdm(
                                     total=file_item["size"],
@@ -349,7 +360,7 @@ def send_handler() -> None:
                                     colour="green",
                                 )
                                 transfer_progress[
-                                    TEMP_FOLDER_PATH / (selected_user["uname"] + file_item["path"])
+                                    TEMP_FOLDER_PATH / selected_user["uname"] / file_item["path"]
                                 ] = {
                                     "progress": 0,
                                     "status": TransferStatus.NEVER_STARTED,
@@ -378,7 +389,7 @@ def send_handler() -> None:
                                 )
                                 for f in files_to_request:
                                     transfer_progress[
-                                        TEMP_FOLDER_PATH / (selected_user["uname"] + f["path"])
+                                        TEMP_FOLDER_PATH / selected_user["uname"] / f["path"]
                                     ] = {
                                         "progress": 0,
                                         "status": TransferStatus.NEVER_STARTED,
@@ -513,11 +524,18 @@ def send_handler() -> None:
                 relative_path: str = transfer_progress_prompt.prompt()
                 if relative_path:
                     path = TEMP_FOLDER_PATH / relative_path
-                    executor = ThreadPoolExecutor()
+                    executor = ThreadPoolExecutor(2)
                     if path.is_file():
                         if path in transfer_progress:
-                            if transfer_progress[path]["status"] == TransferStatus.DOWNLOADING:
+                            if transfer_progress[path]["status"] in [
+                                TransferStatus.DOWNLOADING,
+                                TransferStatus.NEVER_STARTED,
+                            ]:
                                 transfer_progress[path]["status"] = TransferStatus.PAUSED
+                                logging.debug(
+                                    msg=f"{str(path)} -> {transfer_progress[path]['status']}"
+                                )
+                                print(f"{str(path)} -> {transfer_progress[path]['status']}")
                                 print(f"\nPaused transfer for file {str(path)}")
                             elif transfer_progress[path]["status"] == TransferStatus.PAUSED:
                                 uname = str(path).removeprefix(str(TEMP_FOLDER_PATH)).split("/")[1]
@@ -532,7 +550,7 @@ def send_handler() -> None:
                                     "children": None,
                                 }
                                 if peer_ip is not None:
-                                    executor = ThreadPoolExecutor()
+                                    executor = ThreadPoolExecutor(2)
                                     progress_bar = tqdm.tqdm(
                                         total=file_item["size"],
                                         desc=f"Downloading {file_item['name']}",
@@ -541,6 +559,7 @@ def send_handler() -> None:
                                         unit_divisor=1024,
                                         colour="green",
                                     )
+                                    transfer_progress[path]["status"] = TransferStatus.DOWNLOADING
                                     executor.submit(
                                         req_file_worker, file_item, uname, peer_ip, progress_bar
                                     )
@@ -561,6 +580,9 @@ def send_handler() -> None:
                             ) in transfer_progress.items():
                                 if path in pathname.parents:
                                     if progress["status"] == TransferStatus.PAUSED:
+                                        transfer_progress[pathname][
+                                            "status"
+                                        ] = TransferStatus.DOWNLOADING
                                         paused_dir_files.append(
                                             {
                                                 "name": pathname.name,
@@ -574,10 +596,19 @@ def send_handler() -> None:
                                                 "children": None,
                                             }
                                         )
-                                    elif progress["status"] == TransferStatus.DOWNLOADING:
+                                    elif progress["status"] in [
+                                        TransferStatus.DOWNLOADING,
+                                        TransferStatus.NEVER_STARTED,
+                                    ]:
                                         transfer_progress[pathname][
                                             "status"
                                         ] = TransferStatus.PAUSED
+                                        logging.debug(
+                                            msg=f"{str(pathname)} -> {transfer_progress[pathname]['status']}"
+                                        )
+                                        print(
+                                            f"{str(pathname)} -> {transfer_progress[pathname]['status']}"
+                                        )
                                         print(f"\nPaused transfer for file {str(pathname)}")
 
                             total_size = sum([file["size"] for file in paused_dir_files])
@@ -608,11 +639,12 @@ def send_handler() -> None:
                             f"{uname}: Offline (Last active : {time.strftime('%d-%m-%Y %H:%M:%S', timestamp)})"
                         )
 
-            case _:
-                if os.name == "nt":
-                    os._exit(0)
-                else:
-                    os.kill(os.getpid(), signal.SIGINT)
+            case "0":
+                # if os.name == "nt":
+                #     os._exit(0)
+                # else:
+                #     os.kill(os.getpid(), signal.SIGTERM)
+                sys.exit(0)
 
 
 def req_file_worker(file_item: DirData, uname: str, peer_ip: str, progress_bar: tqdm.tqdm):
@@ -778,7 +810,6 @@ def receive_msg(socket: socket.socket) -> str:
                         ExceptionCode.BAD_REQUEST,
                     )
                 else:
-                    # TODO: Update file info on server
                     share_data = msgpack.packb(path_to_dict(SHARE_FOLDER_PATH)["children"])
                     share_data_header = (
                         f"{HeaderCode.SHARE_DATA.value}{len(share_data):<{HEADER_MSG_LEN}}".encode(

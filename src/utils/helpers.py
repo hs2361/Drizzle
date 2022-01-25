@@ -144,6 +144,7 @@ def get_pending_downloads(transfer_progress: dict[Path, TransferProgress]) -> st
         [
             f"{str(file).removeprefix(str(TEMP_FOLDER_PATH) + '/')}: {progress['status'].name}"
             for (file, progress) in transfer_progress.items()
-            if progress["status"] in [TransferStatus.DOWNLOADING, TransferStatus.PAUSED]
+            if progress["status"]
+            in [TransferStatus.DOWNLOADING, TransferStatus.PAUSED, TransferStatus.NEVER_STARTED]
         ]
     )
