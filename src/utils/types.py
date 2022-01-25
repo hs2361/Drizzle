@@ -3,10 +3,12 @@ from typing import NamedTuple, TypedDict
 
 
 class HeaderCode(Enum):
+
     ERROR = "e"
     FILE = "f"
     FILE_REQUEST = "F"
     FILE_SEARCH = "s"
+    HEARTBEAT_REQUEST = "H"
     REQUEST_UNAME = "R"
     MESSAGE = "m"
     NEW_CONNECTION = "n"

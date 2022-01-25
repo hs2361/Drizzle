@@ -2,6 +2,7 @@ import logging
 import select
 import socket
 import sys
+import time
 
 import msgpack
 from tinydb import Query, TinyDB
@@ -37,6 +38,9 @@ sockets_list = [server_socket]
 # uname -> IP
 uname_to_ip: dict[str, str] = {}
 ip_to_uname: dict[str, str] = {}
+
+
+uname_to_status: dict[str, int] = {}
 
 
 def receive_msg(client_socket: socket.socket) -> Message:
@@ -277,6 +281,23 @@ def read_handler(notified_socket: socket.socket) -> None:
                             msg=f"Username does not exist",
                             code=ExceptionCode.NOT_FOUND,
                         )
+
+                case HeaderCode.HEARTBEAT_REQUEST:
+                    username = ip_to_uname.get(notified_socket.getpeername()[0])
+                    if username is not None:
+                        uname_to_status[username] = time.time()
+                        data = msgpack.packb(uname_to_status)
+                        header = f"{HeaderCode.HEARTBEAT_REQUEST.value}{len(data):<{HEADER_MSG_LEN}}".encode(
+                            FMT
+                        )
+                        notified_socket.sendall(header + data)
+
+                    else:
+                        raise RequestException(
+                            msg=f"Username does not exist",
+                            code=ExceptionCode.NOT_FOUND,
+                        )
+
                 case _:
                     raise RequestException(
                         msg=f"Bad request from {notified_socket.getpeername()}",

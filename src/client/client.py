@@ -1,3 +1,4 @@
+import datetime
 import hashlib
 import logging
 import os
@@ -9,6 +10,7 @@ import signal
 import socket
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from pprint import pformat
@@ -25,6 +27,8 @@ from utils.constants import (
     FMT,
     HEADER_MSG_LEN,
     HEADER_TYPE_LEN,
+    HEARTBEAT_TIMER,
+    ONLINE_TIMEOUT,
     RECV_FOLDER_PATH,
     SERVER_RECV_PORT,
     SHARE_FOLDER_PATH,
@@ -84,7 +88,26 @@ while True:
 client_recv_socket.listen(5)
 connected = [client_recv_socket]
 transfer_progress: dict[Path, TransferProgress] = {}
+uname_to_status: dict[str, int] = {}
 my_username = ""
+
+
+def send_heartbeat() -> None:
+    global client_send_socket
+    global uname_to_status
+    heartbeat = HeaderCode.HEARTBEAT_REQUEST.value.encode(FMT)
+    client_send_socket.send(heartbeat)
+
+    type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
+    if type == HeaderCode.HEARTBEAT_REQUEST.value:
+        length = int(client_send_socket.recv((HEADER_MSG_LEN)).decode(FMT))
+        uname_to_status = msgpack.unpackb(client_send_socket.recv(length))
+
+    else:
+        raise RequestException(
+            f"Server sent invalid message type in header: {type}",
+            ExceptionCode.INVALID_HEADER,
+        )
 
 
 def prompt_username() -> str:
@@ -244,7 +267,7 @@ def send_handler() -> None:
     global client_send_socket
     # with StdoutProxy(sleep_between_writes=0):
     mode_prompt: PromptSession = PromptSession(
-        "\nMODE: \n1. Browse files\n2. Send message\n3. Pause/resume downloads\n4. Exit\nEnter Mode: "
+        "\nMODE: \n1. Browse files\n2. Send message\n3. Pause/resume downloads\n4.View online peers\n5. Exit\nEnter Mode: "
     )
     recipient_prompt: PromptSession = PromptSession("Enter username: ")
     while True:
@@ -575,6 +598,18 @@ def send_handler() -> None:
                     else:
                         print("\nFile does not exist")
             case "4":
+                for uname, last_active in uname_to_status.items():
+                    if time.time() - last_active <= ONLINE_TIMEOUT:
+                        print(f"{uname} :\t Online")
+
+                    else:
+
+                        timestamp = datetime.datetime.fromtimestamp(last_active)
+                        print(
+                            f"{uname} :\t Offline (Last active : {timestamp.strftime('%d-%m-%Y %H:%M:%S')}"
+                        )
+
+            case _:
                 if os.name == "nt":
                     os._exit(0)
                 else:
@@ -862,9 +897,13 @@ if __name__ == "__main__":
             threading.excepthook = excepthook
             send_thread = threading.Thread(target=send_handler)
             receive_thread = threading.Thread(target=receive_handler)
+            heartbeat_thread = threading.Timer(HEARTBEAT_TIMER, target=send_heartbeat)
+
             send_thread.start()
             receive_thread.start()
+            heartbeat_thread.start()
             send_thread.join()
+
         except (KeyboardInterrupt, EOFError, SystemExit):
             with open(
                 f"/Drizzle/db/{my_username}_transfer_progress.obj", mode="wb"
