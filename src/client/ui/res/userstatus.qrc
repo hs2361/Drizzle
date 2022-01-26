@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="res">
+    <file>earth.png</file>
+    <file>web-off.png</file>
+  </qresource>
+</RCC>
