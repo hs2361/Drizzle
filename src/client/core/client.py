@@ -90,9 +90,9 @@ uname_to_status: dict[str, int] = {}
 my_username = ""
 
 
-def send_heartbeat() -> None:
-    global client_send_socket
-    global uname_to_status
+def send_heartbeat(client_send_socket: socket.socket, uname_to_status: dict[str, int]) -> None:
+    # global client_send_socket
+    # global uname_to_status
     heartbeat = HeaderCode.HEARTBEAT_REQUEST.value.encode(FMT)
     while True:
         time.sleep(HEARTBEAT_TIMER)
@@ -101,7 +101,7 @@ def send_heartbeat() -> None:
 
         if type == HeaderCode.HEARTBEAT_REQUEST.value:
             length = int(client_send_socket.recv((HEADER_MSG_LEN)).decode(FMT))
-            uname_to_status = msgpack.unpackb(client_send_socket.recv(length))
+            msgpack.unpackb(client_send_socket.recv(length))
 
         else:
             raise RequestException(

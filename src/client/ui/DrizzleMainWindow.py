@@ -1,6 +1,8 @@
 import logging
 import socket
 import sys
+import time
+from pathlib import Path
 
 import msgpack
 from PyQt5.QtCore import *
@@ -14,10 +16,12 @@ from utils.constants import (
     FMT,
     HEADER_MSG_LEN,
     HEADER_TYPE_LEN,
+    HEARTBEAT_TIMER,
+    ONLINE_TIMEOUT,
     SERVER_RECV_PORT,
 )
 from utils.exceptions import ExceptionCode, RequestException
-from utils.helpers import get_ip
+from utils.helpers import get_ip, path_to_dict
 from utils.types import HeaderCode
 
 SERVER_IP = ""
@@ -34,10 +38,37 @@ client_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
 client_send_socket.bind((CLIENT_IP, CLIENT_SEND_PORT))
 client_recv_socket.bind((CLIENT_IP, CLIENT_RECV_PORT))
 
+uname_to_status: dict[str, int] = {}
+
+
+class HeartbeatWorker(QObject):
+    global client_send_socket
+    global uname_to_status
+
+    update = pyqtSignal()
+
+    def run(self):
+        heartbeat = HeaderCode.HEARTBEAT_REQUEST.value.encode(FMT)
+        while True:
+            time.sleep(HEARTBEAT_TIMER)
+            client_send_socket.send(heartbeat)
+            type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
+
+            if type == HeaderCode.HEARTBEAT_REQUEST.value:
+                length = int(client_send_socket.recv((HEADER_MSG_LEN)).decode(FMT))
+                msgpack.unpackb(client_send_socket.recv(length))
+                self.update.emit()
+            else:
+                raise RequestException(
+                    f"Server sent invalid message type in header: {type}",
+                    ExceptionCode.INVALID_HEADER,
+                )
+
 
 class Ui_DrizzleMainWindow(QWidget):
     global client_send_socket
     global client_recv_socket
+    global uname_to_status
 
     def __init__(self, MainWindow):
         super(Ui_DrizzleMainWindow, self).__init__()
@@ -66,9 +97,44 @@ class Ui_DrizzleMainWindow(QWidget):
                     client_send_socket.close()
                     client_recv_socket.close()
                     MainWindow.close()
+            #
+            share_data = msgpack.packb(
+                path_to_dict(Path(MainWindow.user_settings["share_folder_path"]))["children"]
+            )
+            share_data_header = (
+                f"{HeaderCode.SHARE_DATA.value}{len(share_data):<{HEADER_MSG_LEN}}".encode(FMT)
+            )
+            client_send_socket.sendall(share_data_header + share_data)
+            # threading.Thread(target=send_heartbeat).start()
+            self.heartbeat_thread = QThread()
+            self.heartbeat_worker = HeartbeatWorker()
+            self.heartbeat_worker.moveToThread(self.heartbeat_thread)
+            self.heartbeat_thread.started.connect(self.heartbeat_worker.run)
+            self.heartbeat_worker.update.connect(self.updateOnlineStatus)
+            self.heartbeat_thread.start()
+
         except Exception as e:
             logging.error(f"Could not connect to server: {e}")
         self.setupUi(MainWindow)
+
+    def closeEvent(self, event) -> None:
+        self.heartbeat_thread.exit()
+        return super().closeEvent(event)
+
+    def updateOnlineStatus(self):
+        logging.debug(f"Update online status to {uname_to_status}")
+        self.lw_OnlineStatus.clear()
+        for uname, last_seen in uname_to_status.items():
+            status_item = QListWidgetItem(self.lw_OnlineStatus)
+            status_item.setIcon(
+                self.icon_Online if time.time() - last_seen <= ONLINE_TIMEOUT else self.icon_Offline
+            )
+            timestamp = time.localtime(last_seen)
+            status_item.setText(
+                uname + ""
+                if time.time() - last_seen <= ONLINE_TIMEOUT
+                else f" (last active: {time.strftime('%d-%m-%Y %H:%M:%S', timestamp)})"
+            )
 
     def setupUi(self, MainWindow):
         if not MainWindow.objectName():
@@ -188,23 +254,23 @@ class Ui_DrizzleMainWindow(QWidget):
 
         self.Users.addWidget(self.label_2)
 
-        self.listWidget = QListWidget(self.centralwidget)
-        icon = QIcon()
-        icon.addFile("ui/res/earth.png", QSize(), QIcon.Normal, QIcon.Off)
-        __qlistwidgetitem = QListWidgetItem(self.listWidget)
-        __qlistwidgetitem.setIcon(icon)
-        __qlistwidgetitem1 = QListWidgetItem(self.listWidget)
-        __qlistwidgetitem1.setIcon(icon)
-        icon1 = QIcon()
-        icon1.addFile("ui/res/web-off.png", QSize(), QIcon.Normal, QIcon.Off)
-        __qlistwidgetitem2 = QListWidgetItem(self.listWidget)
-        __qlistwidgetitem2.setIcon(icon1)
-        __qlistwidgetitem3 = QListWidgetItem(self.listWidget)
-        __qlistwidgetitem3.setIcon(icon)
-        self.listWidget.setObjectName("listWidget")
-        self.listWidget.setSortingEnabled(False)
+        self.lw_OnlineStatus = QListWidget(self.centralwidget)
+        self.icon_Online = QIcon()
+        self.icon_Online.addFile("ui/res/earth.png", QSize(), QIcon.Normal, QIcon.Off)
+        # __qlistwidgetitem = QListWidgetItem(self.listWidget)
+        # __qlistwidgetitem.setIcon(icon)
+        # __qlistwidgetitem1 = QListWidgetItem(self.listWidget)
+        # __qlistwidgetitem1.setIcon(icon)
+        self.icon_Offline = QIcon()
+        self.icon_Offline.addFile("ui/res/web-off.png", QSize(), QIcon.Normal, QIcon.Off)
+        # __qlistwidgetitem2 = QListWidgetItem(self.listWidget)
+        # __qlistwidgetitem2.setIcon(icon1)
+        # __qlistwidgetitem3 = QListWidgetItem(self.listWidget)
+        # __qlistwidgetitem3.setIcon(icon)
+        self.lw_OnlineStatus.setObjectName("listWidget")
+        self.lw_OnlineStatus.setSortingEnabled(False)
 
-        self.Users.addWidget(self.listWidget)
+        self.Users.addWidget(self.lw_OnlineStatus)
 
         self.textEdit = QTextEdit(self.centralwidget)
         self.textEdit.setObjectName("textEdit")
@@ -513,19 +579,19 @@ class Ui_DrizzleMainWindow(QWidget):
         self.pushButton_4.setText(QCoreApplication.translate("MainWindow", "Download", None))
         self.label_2.setText(QCoreApplication.translate("MainWindow", "Users", None))
 
-        __sortingEnabled1 = self.listWidget.isSortingEnabled()
-        self.listWidget.setSortingEnabled(False)
-        ___qlistwidgetitem = self.listWidget.item(0)
+        __sortingEnabled1 = self.lw_OnlineStatus.isSortingEnabled()
+        self.lw_OnlineStatus.setSortingEnabled(False)
+        ___qlistwidgetitem = self.lw_OnlineStatus.item(0)
         ___qlistwidgetitem.setText(QCoreApplication.translate("MainWindow", "RichardRoe12", None))
-        ___qlistwidgetitem1 = self.listWidget.item(1)
+        ___qlistwidgetitem1 = self.lw_OnlineStatus.item(1)
         ___qlistwidgetitem1.setText(QCoreApplication.translate("MainWindow", "ronaldw", None))
-        ___qlistwidgetitem2 = self.listWidget.item(2)
+        ___qlistwidgetitem2 = self.lw_OnlineStatus.item(2)
         ___qlistwidgetitem2.setText(
             QCoreApplication.translate("MainWindow", "harrypotter (last active: 11:45 am)", None)
         )
-        ___qlistwidgetitem3 = self.listWidget.item(3)
+        ___qlistwidgetitem3 = self.lw_OnlineStatus.item(3)
         ___qlistwidgetitem3.setText(QCoreApplication.translate("MainWindow", "anonymous_lol", None))
-        self.listWidget.setSortingEnabled(__sortingEnabled1)
+        self.lw_OnlineStatus.setSortingEnabled(__sortingEnabled1)
 
         self.textEdit.setHtml(
             QCoreApplication.translate(
