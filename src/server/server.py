@@ -3,28 +3,30 @@ import select
 import socket
 import sys
 import time
+from pathlib import Path
 
 import msgpack
 from tinydb import Query, TinyDB
 
+sys.path.append("../")
 from utils.constants import FMT, HEADER_MSG_LEN, HEADER_TYPE_LEN, SERVER_RECV_PORT
 from utils.exceptions import ExceptionCode, RequestException
-from utils.helpers import update_file_hash
+from utils.helpers import get_ip, update_file_hash
 from utils.socket_functions import recvall
 from utils.types import DBData, DirData, HeaderCode, Message, UpdateHashParams
 
-IP = socket.gethostbyname(socket.gethostname())
+IP = get_ip()
 
 
 logging.basicConfig(
     level=logging.DEBUG,
     handlers=[
-        logging.FileHandler(f"/logs/server_{IP}.log"),
+        logging.FileHandler(f"{str(Path.home())}/.Drizzle/logs/server_{IP}.log"),
         logging.StreamHandler(sys.stdout),
     ],
 )
 
-drizzle_db = TinyDB("/Drizzle/db/db.json")
+drizzle_db = TinyDB(f"{str(Path.home())}/.Drizzle/db/db.json")
 
 print(f"SERVER IP: {IP}")
 

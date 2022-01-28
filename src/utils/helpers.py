@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import os
+import socket
 from pathlib import Path
 
 from prompt_toolkit.validation import ValidationError, Validator
@@ -148,3 +149,17 @@ def get_pending_downloads(transfer_progress: dict[Path, TransferProgress]) -> st
             in [TransferStatus.DOWNLOADING, TransferStatus.PAUSED, TransferStatus.NEVER_STARTED]
         ]
     )
+
+
+def get_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.settimeout(0)
+    try:
+        # doesn't even have to be reachable
+        s.connect(("1.1.1.1", 1))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = "127.0.0.1"
+    finally:
+        s.close()
+    return ip

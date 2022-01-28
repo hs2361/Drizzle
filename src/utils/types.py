@@ -79,3 +79,10 @@ class UpdateHashParams(TypedDict):
 class DBData(TypedDict):
     uname: str
     share: list[DirData]
+
+
+class UserSettings(TypedDict):
+    uname: str
+    server_ip: str
+    share_folder_path: str
+    downloads_folder_path: str

@@ -1,21 +1,75 @@
-# -*- coding: utf-8 -*-
+import logging
+import socket
+import sys
 
-################################################################################
-## Form generated from reading UI file 'DrizzleMainWindow.ui'
-##
-## Created by: Qt User Interface Compiler version 5.15.2
-##
-## WARNING! All changes made in this file will be lost when recompiling UI file!
-################################################################################
+import msgpack
+from PyQt5.QtCore import *
+from PyQt5.QtGui import *
+from PyQt5.QtWidgets import *
 
-from PySide2.QtCore import *
-from PySide2.QtGui import *
-from PySide2.QtWidgets import *
+sys.path.append("../")
+from utils.constants import (
+    CLIENT_RECV_PORT,
+    CLIENT_SEND_PORT,
+    FMT,
+    HEADER_MSG_LEN,
+    HEADER_TYPE_LEN,
+    SERVER_RECV_PORT,
+)
+from utils.exceptions import ExceptionCode, RequestException
+from utils.helpers import get_ip
+from utils.types import HeaderCode
 
-# import userstatus_rc
+SERVER_IP = ""
+SERVER_ADDR = ()
+CLIENT_IP = get_ip()
+client_send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # to connect to main server
+client_recv_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # to receive new connections
+client_send_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+client_recv_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+client_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+client_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+client_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
+client_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
+client_send_socket.bind((CLIENT_IP, CLIENT_SEND_PORT))
+client_recv_socket.bind((CLIENT_IP, CLIENT_RECV_PORT))
 
 
-class Ui_DrizzleMainWindow(object):
+class Ui_DrizzleMainWindow(QWidget):
+    global client_send_socket
+    global client_recv_socket
+
+    def __init__(self, MainWindow):
+        super(Ui_DrizzleMainWindow, self).__init__()
+        try:
+            SERVER_IP = MainWindow.user_settings["server_ip"]
+            SERVER_ADDR = (SERVER_IP, SERVER_RECV_PORT)
+            client_send_socket.connect(SERVER_ADDR)
+            username = MainWindow.user_settings["uname"].encode(FMT)
+            username_header = (
+                f"{HeaderCode.NEW_CONNECTION.value}{len(username):<{HEADER_MSG_LEN}}".encode(FMT)
+            )
+            client_send_socket.send(username_header + username)
+            type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
+            if type != HeaderCode.NEW_CONNECTION.value:
+                error_len = int(client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip())
+                error = client_send_socket.recv(error_len)
+                exception: RequestException = msgpack.unpackb(
+                    error, object_hook=RequestException.from_dict, raw=False
+                )
+                if exception.code == ExceptionCode.USER_EXISTS:
+                    logging.error(msg=exception.msg)
+                    print("\nSorry that username is taken, please choose another one")
+                else:
+                    logging.fatal(msg=exception.msg)
+                    print("\nSorry something went wrong")
+                    client_send_socket.close()
+                    client_recv_socket.close()
+                    MainWindow.close()
+        except Exception as e:
+            logging.error(f"Could not connect to server: {e}")
+        self.setupUi(MainWindow)
+
     def setupUi(self, MainWindow):
         if not MainWindow.objectName():
             MainWindow.setObjectName("MainWindow")
@@ -397,7 +451,11 @@ class Ui_DrizzleMainWindow(object):
 
     def retranslateUi(self, MainWindow):
         MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", "Drizzle", None))
-        self.label_3.setText(QCoreApplication.translate("MainWindow", "Drizzle / john_doe_", None))
+        self.label_3.setText(
+            QCoreApplication.translate(
+                "MainWindow", f"Drizzle / {MainWindow.user_settings['uname']}", None
+            )
+        )
         self.pushButton_2.setText(QCoreApplication.translate("MainWindow", "Add Files", None))
         self.pushButton.setText(QCoreApplication.translate("MainWindow", "Settings", None))
         self.label.setText(QCoreApplication.translate("MainWindow", "Browse Files", None))

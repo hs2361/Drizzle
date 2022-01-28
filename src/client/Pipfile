@@ -7,7 +7,7 @@ name = "pypi"
 msgpack = "*"
 prompt-toolkit = "*"
 tqdm = "*"
-pyside2 = "*"
+PyQt5 = "*"
 
 [dev-packages]
 pre-commit = "*"

@@ -17,6 +17,7 @@ import tqdm
 from prompt_toolkit.patch_stdout import StdoutProxy
 from prompt_toolkit.shortcuts import PromptSession
 
+sys.path.append("../../")
 from utils.constants import (
     CLIENT_RECV_PORT,
     CLIENT_SEND_PORT,
@@ -60,7 +61,7 @@ SERVER_IP = ""
 SERVER_ADDR = (SERVER_IP, SERVER_RECV_PORT)
 CLIENT_IP = socket.gethostbyname(socket.gethostname())
 
-logging.basicConfig(filename=f"/logs/client_{CLIENT_IP}.log", level=logging.DEBUG)
+# logging.basicConfig(filename=f"/logs/client_{CLIENT_IP}.log", level=logging.DEBUG)
 
 client_send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # to connect to main server
 client_recv_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # to receive new connections
