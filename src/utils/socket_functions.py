@@ -8,6 +8,19 @@ from utils.exceptions import RequestException
 from utils.types import HeaderCode
 
 
+def get_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.settimeout(0)
+    try:
+        s.connect(("1.1.1.1", 1))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = "127.0.0.1"
+    finally:
+        s.close()
+    return ip
+
+
 def request_ip(uname: str, client_send_socket: socket.socket) -> str | None:
     uname_bytes = uname.encode(FMT)
     request_header = f"{HeaderCode.REQUEST_IP.value}{len(uname_bytes):<{HEADER_MSG_LEN}}".encode(

@@ -11,8 +11,8 @@ from tinydb import Query, TinyDB
 sys.path.append("../")
 from utils.constants import FMT, HEADER_MSG_LEN, HEADER_TYPE_LEN, SERVER_RECV_PORT
 from utils.exceptions import ExceptionCode, RequestException
-from utils.helpers import get_ip, update_file_hash
-from utils.socket_functions import recvall
+from utils.helpers import update_file_hash
+from utils.socket_functions import get_ip, recvall
 from utils.types import DBData, DirData, HeaderCode, Message, UpdateHashParams
 
 IP = get_ip()
@@ -73,7 +73,7 @@ def receive_msg(client_socket: socket.socket) -> Message:
         message_len = int(client_socket.recv(HEADER_MSG_LEN).decode(FMT))
         query = recvall(client_socket, message_len)
         logging.debug(
-            msg=f"Received packet: TYPE {message_type} LEN {message_len} QUERY query!r from {client_socket.getpeername()}"
+            msg=f"Received packet: TYPE {message_type} LEN {message_len} from {client_socket.getpeername()}"
         )
         return {"type": HeaderCode(message_type), "query": query}
 
@@ -101,7 +101,8 @@ def read_handler(notified_socket: socket.socket) -> None:
             if ip_to_uname.get(notified_socket.getpeername()[0]) is None:
                 if request["type"] != HeaderCode.NEW_CONNECTION:
                     raise RequestException(
-                        msg=f"User at {client_addr} not registered", code=ExceptionCode.UNAUTHORIZED
+                        msg=f"User at {client_addr} not registered",
+                        code=ExceptionCode.UNAUTHORIZED,
                     )
                 uname = request["query"].decode(FMT)
                 addr = uname_to_ip.get(uname)
@@ -240,10 +241,12 @@ def read_handler(notified_socket: socket.socket) -> None:
                         )
                 case HeaderCode.FILE_SEARCH:
                     username = ip_to_uname.get(notified_socket.getpeername()[0])
-                    if username is not None:
+                    user_exists = uname_to_ip.get(request["query"], False)
+                    if username != request["query"] and user_exists:
                         User = Query()
-                        browse_files: list[DBData] = drizzle_db.search(User.uname != username)
-                        # logging.debug(f"{browse_files}")
+                        browse_files: list[DBData] = drizzle_db.search(
+                            User.uname == request["query"]
+                        )
                         browse_files_bytes = msgpack.packb(browse_files)
                         browse_files_header = f"{HeaderCode.FILE_SEARCH.value}{len(browse_files_bytes):<{HEADER_MSG_LEN}}".encode(
                             FMT
@@ -251,8 +254,8 @@ def read_handler(notified_socket: socket.socket) -> None:
                         notified_socket.sendall(browse_files_header + browse_files_bytes)
                     else:
                         raise RequestException(
-                            msg=f"Username does not exist",
-                            code=ExceptionCode.NOT_FOUND,
+                            msg=f"Cannot search for own files",
+                            code=ExceptionCode.BAD_REQUEST,
                         )
 
                 case HeaderCode.HEARTBEAT_REQUEST:

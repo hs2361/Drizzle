@@ -21,7 +21,8 @@ from utils.constants import (
     SERVER_RECV_PORT,
 )
 from utils.exceptions import ExceptionCode, RequestException
-from utils.helpers import get_ip, path_to_dict
+from utils.helpers import path_to_dict
+from utils.socket_functions import get_ip
 from utils.types import HeaderCode
 
 SERVER_IP = ""
@@ -42,12 +43,11 @@ uname_to_status: dict[str, int] = {}
 
 
 class HeartbeatWorker(QObject):
-    global client_send_socket
-    global uname_to_status
-
-    update = pyqtSignal()
+    update_status = pyqtSignal()
 
     def run(self):
+        global client_send_socket
+        global uname_to_status
         heartbeat = HeaderCode.HEARTBEAT_REQUEST.value.encode(FMT)
         while True:
             time.sleep(HEARTBEAT_TIMER)
@@ -56,8 +56,8 @@ class HeartbeatWorker(QObject):
 
             if type == HeaderCode.HEARTBEAT_REQUEST.value:
                 length = int(client_send_socket.recv((HEADER_MSG_LEN)).decode(FMT))
-                msgpack.unpackb(client_send_socket.recv(length))
-                self.update.emit()
+                uname_to_status = msgpack.unpackb(client_send_socket.recv(length))
+                self.update_status.emit()
             else:
                 raise RequestException(
                     f"Server sent invalid message type in header: {type}",
@@ -105,12 +105,12 @@ class Ui_DrizzleMainWindow(QWidget):
                 f"{HeaderCode.SHARE_DATA.value}{len(share_data):<{HEADER_MSG_LEN}}".encode(FMT)
             )
             client_send_socket.sendall(share_data_header + share_data)
-            # threading.Thread(target=send_heartbeat).start()
+
             self.heartbeat_thread = QThread()
             self.heartbeat_worker = HeartbeatWorker()
             self.heartbeat_worker.moveToThread(self.heartbeat_thread)
             self.heartbeat_thread.started.connect(self.heartbeat_worker.run)
-            self.heartbeat_worker.update.connect(self.updateOnlineStatus)
+            self.heartbeat_worker.update_status.connect(self.updateOnlineStatus)
             self.heartbeat_thread.start()
 
         except Exception as e:
@@ -581,16 +581,16 @@ class Ui_DrizzleMainWindow(QWidget):
 
         __sortingEnabled1 = self.lw_OnlineStatus.isSortingEnabled()
         self.lw_OnlineStatus.setSortingEnabled(False)
-        ___qlistwidgetitem = self.lw_OnlineStatus.item(0)
-        ___qlistwidgetitem.setText(QCoreApplication.translate("MainWindow", "RichardRoe12", None))
-        ___qlistwidgetitem1 = self.lw_OnlineStatus.item(1)
-        ___qlistwidgetitem1.setText(QCoreApplication.translate("MainWindow", "ronaldw", None))
-        ___qlistwidgetitem2 = self.lw_OnlineStatus.item(2)
-        ___qlistwidgetitem2.setText(
-            QCoreApplication.translate("MainWindow", "harrypotter (last active: 11:45 am)", None)
-        )
-        ___qlistwidgetitem3 = self.lw_OnlineStatus.item(3)
-        ___qlistwidgetitem3.setText(QCoreApplication.translate("MainWindow", "anonymous_lol", None))
+        # ___qlistwidgetitem = self.lw_OnlineStatus.item(0)
+        # ___qlistwidgetitem.setText(QCoreApplication.translate("MainWindow", "RichardRoe12", None))
+        # ___qlistwidgetitem1 = self.lw_OnlineStatus.item(1)
+        # ___qlistwidgetitem1.setText(QCoreApplication.translate("MainWindow", "ronaldw", None))
+        # ___qlistwidgetitem2 = self.lw_OnlineStatus.item(2)
+        # ___qlistwidgetitem2.setText(
+        #     QCoreApplication.translate("MainWindow", "harrypotter (last active: 11:45 am)", None)
+        # )
+        # ___qlistwidgetitem3 = self.lw_OnlineStatus.item(3)
+        # ___qlistwidgetitem3.setText(QCoreApplication.translate("MainWindow", "anonymous_lol", None))
         self.lw_OnlineStatus.setSortingEnabled(__sortingEnabled1)
 
         self.textEdit.setHtml(
