@@ -21,9 +21,9 @@ from utils.constants import (
     SERVER_RECV_PORT,
 )
 from utils.exceptions import ExceptionCode, RequestException
-from utils.helpers import display_share_dict, path_to_dict
+from utils.helpers import path_to_dict
 from utils.socket_functions import get_ip, recvall
-from utils.types import DBData, HeaderCode
+from utils.types import DBData, DirData, HeaderCode
 
 SERVER_IP = ""
 SERVER_ADDR = ()
@@ -108,7 +108,7 @@ class Ui_DrizzleMainWindow(QWidget):
             self.heartbeat_worker = HeartbeatWorker()
             self.heartbeat_worker.moveToThread(self.heartbeat_thread)
             self.heartbeat_thread.started.connect(self.heartbeat_worker.run)
-            self.heartbeat_worker.update_status.connect(self.updateOnlineStatus)
+            self.heartbeat_worker.update_status.connect(self.update_online_status)
             self.heartbeat_thread.start()
 
         except Exception as e:
@@ -119,7 +119,19 @@ class Ui_DrizzleMainWindow(QWidget):
         self.heartbeat_thread.exit()
         return super().closeEvent(event)
 
-    def updateOnlineStatus(self, new_status: dict[str, int]):
+    def render_file_tree(self, share: list[DirData] | None, parent: QTreeWidgetItem):
+        if share is None:
+            return
+        for item in share:
+            if item["type"] == "file":
+                file_item = QTreeWidgetItem(parent)
+                file_item.setText(0, item["name"])
+            else:
+                dir_item = QTreeWidgetItem(parent)
+                dir_item.setText(0, item["name"] + "/")
+                self.render_file_tree(item["children"], dir_item)
+
+    def update_online_status(self, new_status: dict[str, int]):
         global uname_to_status
         old_users = set(uname_to_status.keys())
         new_users = set(new_status.keys())
@@ -183,7 +195,9 @@ class Ui_DrizzleMainWindow(QWidget):
                     recvall(client_send_socket, response_len),
                 )
                 if len(browse_files):
-                    display_share_dict(browse_files[0]["share"], 1)
+                    self.file_tree.clear()
+                    self.file_tree.headerItem().setText(0, username)
+                    self.render_file_tree(browse_files[0]["share"], self.file_tree)
                 else:
                     print("No files found")
             else:
@@ -252,23 +266,24 @@ class Ui_DrizzleMainWindow(QWidget):
 
         self.Files.addWidget(self.label)
 
-        self.treeWidget = QTreeWidget(self.centralwidget)
-        QTreeWidgetItem(self.treeWidget)
-        __qtreewidgetitem = QTreeWidgetItem(self.treeWidget)
-        QTreeWidgetItem(__qtreewidgetitem)
-        QTreeWidgetItem(__qtreewidgetitem)
-        QTreeWidgetItem(__qtreewidgetitem)
-        QTreeWidgetItem(self.treeWidget)
-        __qtreewidgetitem1 = QTreeWidgetItem(self.treeWidget)
-        QTreeWidgetItem(__qtreewidgetitem1)
-        QTreeWidgetItem(__qtreewidgetitem1)
-        QTreeWidgetItem(__qtreewidgetitem1)
-        QTreeWidgetItem(__qtreewidgetitem1)
-        QTreeWidgetItem(self.treeWidget)
-        self.treeWidget.setObjectName("treeWidget")
-        self.treeWidget.header().setVisible(True)
+        self.file_tree = QTreeWidget(self.centralwidget)
+        # QTreeWidgetItem(self.file_tree)
+        # __qtreewidgetitem = QTreeWidgetItem(self.file_tree)
+        # QTreeWidgetItem(__qtreewidgetitem)
+        # QTreeWidgetItem(__qtreewidgetitem)
+        # QTreeWidgetItem(__qtreewidgetitem)
+        # QTreeWidgetItem(self.file_tree)
+        # __qtreewidgetitem1 = QTreeWidgetItem(self.file_tree)
+        # QTreeWidgetItem(__qtreewidgetitem1)
+        # QTreeWidgetItem(__qtreewidgetitem1)
+        # QTreeWidgetItem(__qtreewidgetitem1)
+        # QTreeWidgetItem(__qtreewidgetitem1)
+        # QTreeWidgetItem(self.file_tree)
+        # self.file_tree.setObjectName("treeWidget")
+        self.file_tree.header().setVisible(True)
+        self.file_tree.headerItem().setText(0, "No user selected")
 
-        self.Files.addWidget(self.treeWidget)
+        self.Files.addWidget(self.file_tree)
 
         self.horizontalLayout_2 = QHBoxLayout()
         self.horizontalLayout_2.setObjectName("horizontalLayout_2")
@@ -574,52 +589,52 @@ class Ui_DrizzleMainWindow(QWidget):
         self.pushButton_2.setText(QCoreApplication.translate("MainWindow", "Add Files", None))
         self.pushButton.setText(QCoreApplication.translate("MainWindow", "Settings", None))
         self.label.setText(QCoreApplication.translate("MainWindow", "Browse Files", None))
-        ___qtreewidgetitem = self.treeWidget.headerItem()
-        ___qtreewidgetitem.setText(
-            0, QCoreApplication.translate("MainWindow", "RichardRoe12", None)
-        )
+        # ___qtreewidgetitem = self.file_tree.headerItem()
+        # ___qtreewidgetitem.setText(
+        #     0, QCoreApplication.translate("MainWindow", "RichardRoe12", None)
+        # )
 
-        __sortingEnabled = self.treeWidget.isSortingEnabled()
-        self.treeWidget.setSortingEnabled(False)
-        ___qtreewidgetitem1 = self.treeWidget.topLevelItem(0)
-        ___qtreewidgetitem1.setText(
-            0, QCoreApplication.translate("MainWindow", "photoshop.iso", None)
-        )
-        ___qtreewidgetitem2 = self.treeWidget.topLevelItem(1)
-        ___qtreewidgetitem2.setText(0, QCoreApplication.translate("MainWindow", "Movies/", None))
-        ___qtreewidgetitem3 = ___qtreewidgetitem2.child(0)
-        ___qtreewidgetitem3.setText(
-            0, QCoreApplication.translate("MainWindow", "The Matrix.mov", None)
-        )
-        ___qtreewidgetitem4 = ___qtreewidgetitem2.child(1)
-        ___qtreewidgetitem4.setText(
-            0, QCoreApplication.translate("MainWindow", "Forrest Gump.mp4", None)
-        )
-        ___qtreewidgetitem5 = ___qtreewidgetitem2.child(2)
-        ___qtreewidgetitem5.setText(0, QCoreApplication.translate("MainWindow", "Django.mp4", None))
-        ___qtreewidgetitem6 = self.treeWidget.topLevelItem(2)
-        ___qtreewidgetitem6.setText(
-            0, QCoreApplication.translate("MainWindow", "msoffice.zip", None)
-        )
-        ___qtreewidgetitem7 = self.treeWidget.topLevelItem(3)
-        ___qtreewidgetitem7.setText(0, QCoreApplication.translate("MainWindow", "Games/", None))
-        ___qtreewidgetitem8 = ___qtreewidgetitem7.child(0)
-        ___qtreewidgetitem8.setText(0, QCoreApplication.translate("MainWindow", "NFS/", None))
-        ___qtreewidgetitem9 = ___qtreewidgetitem7.child(1)
-        ___qtreewidgetitem9.setText(
-            0, QCoreApplication.translate("MainWindow", "nfsmostwanted.zip", None)
-        )
-        ___qtreewidgetitem10 = ___qtreewidgetitem7.child(2)
-        ___qtreewidgetitem10.setText(
-            0, QCoreApplication.translate("MainWindow", "TLauncher.zip", None)
-        )
-        ___qtreewidgetitem11 = ___qtreewidgetitem7.child(3)
-        ___qtreewidgetitem11.setText(0, QCoreApplication.translate("MainWindow", "GTA-V.iso", None))
-        ___qtreewidgetitem12 = self.treeWidget.topLevelItem(4)
-        ___qtreewidgetitem12.setText(
-            0, QCoreApplication.translate("MainWindow", "Study Material/", None)
-        )
-        self.treeWidget.setSortingEnabled(__sortingEnabled)
+        __sortingEnabled = self.file_tree.isSortingEnabled()
+        # self.file_tree.setSortingEnabled(False)
+        # ___qtreewidgetitem1 = self.file_tree.topLevelItem(0)
+        # ___qtreewidgetitem1.setText(
+        #     0, QCoreApplication.translate("MainWindow", "photoshop.iso", None)
+        # )
+        # ___qtreewidgetitem2 = self.file_tree.topLevelItem(1)
+        # ___qtreewidgetitem2.setText(0, QCoreApplication.translate("MainWindow", "Movies/", None))
+        # ___qtreewidgetitem3 = ___qtreewidgetitem2.child(0)
+        # ___qtreewidgetitem3.setText(
+        #     0, QCoreApplication.translate("MainWindow", "The Matrix.mov", None)
+        # )
+        # ___qtreewidgetitem4 = ___qtreewidgetitem2.child(1)
+        # ___qtreewidgetitem4.setText(
+        #     0, QCoreApplication.translate("MainWindow", "Forrest Gump.mp4", None)
+        # )
+        # ___qtreewidgetitem5 = ___qtreewidgetitem2.child(2)
+        # ___qtreewidgetitem5.setText(0, QCoreApplication.translate("MainWindow", "Django.mp4", None))
+        # ___qtreewidgetitem6 = self.file_tree.topLevelItem(2)
+        # ___qtreewidgetitem6.setText(
+        #     0, QCoreApplication.translate("MainWindow", "msoffice.zip", None)
+        # )
+        # ___qtreewidgetitem7 = self.file_tree.topLevelItem(3)
+        # ___qtreewidgetitem7.setText(0, QCoreApplication.translate("MainWindow", "Games/", None))
+        # ___qtreewidgetitem8 = ___qtreewidgetitem7.child(0)
+        # ___qtreewidgetitem8.setText(0, QCoreApplication.translate("MainWindow", "NFS/", None))
+        # ___qtreewidgetitem9 = ___qtreewidgetitem7.child(1)
+        # ___qtreewidgetitem9.setText(
+        #     0, QCoreApplication.translate("MainWindow", "nfsmostwanted.zip", None)
+        # )
+        # ___qtreewidgetitem10 = ___qtreewidgetitem7.child(2)
+        # ___qtreewidgetitem10.setText(
+        #     0, QCoreApplication.translate("MainWindow", "TLauncher.zip", None)
+        # )
+        # ___qtreewidgetitem11 = ___qtreewidgetitem7.child(3)
+        # ___qtreewidgetitem11.setText(0, QCoreApplication.translate("MainWindow", "GTA-V.iso", None))
+        # ___qtreewidgetitem12 = self.file_tree.topLevelItem(4)
+        # ___qtreewidgetitem12.setText(
+        #     0, QCoreApplication.translate("MainWindow", "Study Material/", None)
+        # )
+        self.file_tree.setSortingEnabled(__sortingEnabled)
 
         self.label_4.setText(
             QCoreApplication.translate("MainWindow", "Selected File/Folder: msoffice.zip", None)
