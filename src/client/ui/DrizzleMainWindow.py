@@ -59,7 +59,7 @@ client_recv_socket.listen(5)
 
 connected = [client_recv_socket]
 uname_to_status: dict[str, int] = {}
-messages_store: dict[str, list[Message]]
+messages_store: dict[str, list[Message]] = {}
 selected_uname: str = ""
 self_uname: str = ""
 
@@ -293,7 +293,10 @@ class ReceiveWorker(QObject):
                         message_content: str = self.receive_msg(notified_socket)
                         username = peers[notified_socket.getpeername()[0]]
                         message: Message = {"sender": username, "content": message_content}
-                        messages_store[username].append(message)
+                        if messages_store.get(username) is not None:
+                            messages_store[username].append(message)
+                        else:
+                            messages_store[username] = [message]
                         self.message_received.emit(message)
 
                     except RequestException as e:
