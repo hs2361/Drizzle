@@ -1,6 +1,8 @@
 import logging
+import select
 import socket
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -13,21 +15,36 @@ sys.path.append("../")
 from utils.constants import (
     CLIENT_RECV_PORT,
     CLIENT_SEND_PORT,
+    FILE_BUFFER_LEN,
     FMT,
     HEADER_MSG_LEN,
     HEADER_TYPE_LEN,
     HEARTBEAT_TIMER,
+    LEADING_HTML,
     ONLINE_TIMEOUT,
+    RECV_FOLDER_PATH,
     SERVER_RECV_PORT,
+    SHARE_FOLDER_PATH,
+    TRAILING_HTML,
 )
 from utils.exceptions import ExceptionCode, RequestException
-from utils.helpers import path_to_dict
-from utils.socket_functions import get_ip, recvall
-from utils.types import DBData, DirData, HeaderCode
+from utils.helpers import get_file_hash, get_unique_filename, path_to_dict
+from utils.socket_functions import get_ip, recvall, request_ip
+from utils.types import (
+    DBData,
+    DirData,
+    FileMetadata,
+    FileRequest,
+    HeaderCode,
+    Message,
+    UpdateHashParams,
+)
 
 SERVER_IP = ""
 SERVER_ADDR = ()
 CLIENT_IP = get_ip()
+
+
 client_send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # to connect to main server
 client_recv_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # to receive new connections
 client_send_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -38,8 +55,13 @@ client_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
 client_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
 client_send_socket.bind((CLIENT_IP, CLIENT_SEND_PORT))
 client_recv_socket.bind((CLIENT_IP, CLIENT_RECV_PORT))
+client_recv_socket.listen(5)
 
+connected = [client_recv_socket]
 uname_to_status: dict[str, int] = {}
+messages_store: dict[str, list[Message]]
+selected_uname: str = ""
+self_uname: str = ""
 
 
 class HeartbeatWorker(QObject):
@@ -64,6 +86,226 @@ class HeartbeatWorker(QObject):
                 )
 
 
+class ReceiveWorker(QObject):
+    message_received = pyqtSignal(dict)
+
+    def send_file(
+        self,
+        filepath: Path,
+        requester: tuple[str, int],
+        request_hash: bool,
+        resume_offset: int,
+    ) -> None:
+        file_send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        file_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        file_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
+        file_send_socket.connect(requester)
+        hash = ""
+        # compression = CompressionMethod.NONE
+
+        # file_size = filepath.stat().st_size
+        # if file_size < COMPRESSION_THRESHOLD:
+        #     compression = CompressionMethod.ZSTD
+        #     compressor = zstd.ZstdCompressor()
+        #     with filepath.open(mode="rb") as uncompressed_file:
+        #         with compressor.stream_writer(uncompressed_file) as writer:
+        #             pass
+        if request_hash:
+            hash = get_file_hash(str(filepath))
+
+        filemetadata: FileMetadata = {
+            "path": str(filepath).removeprefix(str(SHARE_FOLDER_PATH) + "/"),
+            "size": filepath.stat().st_size,
+            "hash": hash if request_hash else None,
+            # "compression": compression,
+        }
+
+        logging.debug(filemetadata)
+        filemetadata_bytes = msgpack.packb(filemetadata)
+        logging.debug(filemetadata_bytes)
+        filesend_header = (
+            f"{HeaderCode.FILE.value}{len(filemetadata_bytes):<{HEADER_MSG_LEN}}".encode(FMT)
+        )
+
+        try:
+            file_to_send = filepath.open(mode="rb")
+            logging.debug(f"Sending file {filemetadata['path']} to {requester}")
+            file_send_socket.send(filesend_header + filemetadata_bytes)
+
+            total_bytes_read = 0
+            file_to_send.seek(resume_offset)
+            while total_bytes_read != filemetadata["size"] - resume_offset:
+                time.sleep(0.05)
+                bytes_read = file_to_send.read(FILE_BUFFER_LEN)
+                num_bytes = file_send_socket.send(bytes_read)
+                total_bytes_read += num_bytes
+                print("\nFile Sent")
+                file_to_send.close()
+                file_send_socket.close()
+            if request_hash:
+                update_hash_params: UpdateHashParams = {
+                    "filepath": str(filepath).removeprefix(str(SHARE_FOLDER_PATH) + "/"),
+                    "hash": hash,
+                }
+                update_hash_bytes = msgpack.packb(update_hash_params)
+                update_hash_header = f"{HeaderCode.UPDATE_HASH.value}{len(update_hash_bytes):<{HEADER_MSG_LEN}}".encode(
+                    FMT
+                )
+                client_send_socket.send(update_hash_header + update_hash_bytes)
+        except Exception as e:
+            logging.error(f"File Sending failed: {e}")
+
+    def receive_msg(self, socket: socket.socket) -> str:
+        global client_send_socket
+        logging.debug(f"Receiving from {socket.getpeername()}")
+        message_type = socket.recv(HEADER_TYPE_LEN).decode(FMT)
+        if not len(message_type):
+            raise RequestException(
+                msg=f"Peer at {socket.getpeername()} closed the connection",
+                code=ExceptionCode.DISCONNECT,
+            )
+        elif message_type not in [
+            HeaderCode.MESSAGE.value,
+            HeaderCode.FILE.value,
+            HeaderCode.FILE_REQUEST.value,
+        ]:
+            raise RequestException(
+                msg=f"Invalid message type in header. Received [{message_type}]",
+                code=ExceptionCode.INVALID_HEADER,
+            )
+        else:
+            match message_type:
+                case HeaderCode.FILE.value:
+                    file_header_len = int(socket.recv(HEADER_MSG_LEN).decode(FMT))
+                    file_header: FileMetadata = msgpack.unpackb(socket.recv(file_header_len))
+                    logging.debug(msg=f"receiving file with metadata {file_header}")
+                    write_path: Path = get_unique_filename(RECV_FOLDER_PATH / file_header["path"])
+                    try:
+                        file_to_write = open(str(write_path), "wb")
+                        logging.debug(f"Creating and writing to {write_path}")
+                        try:
+                            byte_count = 0
+
+                            while byte_count != file_header["size"]:
+                                file_bytes_read: bytes = socket.recv(FILE_BUFFER_LEN)
+                                byte_count += len(file_bytes_read)
+                                file_to_write.write(file_bytes_read)
+                            file_to_write.close()
+                            return "Succesfully received 1 file"
+                        except Exception as e:
+                            logging.error(e)
+                            return "File received but failed to save"
+                    except Exception as e:
+                        logging.error(e)
+                        return "Unable to write file"
+                case HeaderCode.FILE_REQUEST.value:
+                    req_header_len = int(socket.recv(HEADER_MSG_LEN).decode(FMT))
+                    file_req_header: FileRequest = msgpack.unpackb(socket.recv(req_header_len))
+                    logging.debug(msg=f"Received request: {file_req_header}")
+                    requested_file_path = SHARE_FOLDER_PATH / file_req_header["filepath"]
+                    if requested_file_path.is_file():
+                        socket.send(HeaderCode.FILE_REQUEST.value.encode(FMT))
+                        send_file_thread = threading.Thread(
+                            target=self.send_file,
+                            args=(
+                                requested_file_path,
+                                (socket.getpeername()[0], file_req_header["port"]),
+                                file_req_header["request_hash"],
+                                file_req_header["resume_offset"],
+                            ),
+                        )
+                        send_file_thread.start()
+                        return "File requested by user"
+                    elif requested_file_path.is_dir():
+                        raise RequestException(
+                            f"Requested a directory, {file_req_header['filepath']} is not a file.",
+                            ExceptionCode.BAD_REQUEST,
+                        )
+                    else:
+                        share_data = msgpack.packb(path_to_dict(SHARE_FOLDER_PATH)["children"])
+                        share_data_header = f"{HeaderCode.SHARE_DATA.value}{len(share_data):<{HEADER_MSG_LEN}}".encode(
+                            FMT
+                        )
+                        client_send_socket.sendall(share_data_header + share_data)
+                        raise RequestException(
+                            f"Requested file {file_req_header['filepath']} is not available",
+                            ExceptionCode.NOT_FOUND,
+                        )
+                case _:
+                    message_len = int(socket.recv(HEADER_MSG_LEN).decode(FMT))
+                    return recvall(socket, message_len).decode(FMT)
+
+    def run(self):
+        global message_store
+        global client_send_socket
+        global client_recv_socket
+        global connected
+        peers: dict[str, str] = {}
+
+        while True:
+            read_sockets: list[socket.socket]
+            read_sockets, _, __ = select.select(connected, [], [])
+            for notified_socket in read_sockets:
+                if notified_socket == client_recv_socket:
+                    peer_socket, peer_addr = client_recv_socket.accept()
+                    logging.debug(
+                        msg=f"Accepted new connection from {peer_addr[0]}:{peer_addr[1]}",
+                    )
+                    try:
+                        connected.append(peer_socket)
+                        lookup = peer_addr[0].encode(FMT)
+                        header = f"{HeaderCode.REQUEST_UNAME.value}{len(lookup):<{HEADER_MSG_LEN}}".encode(
+                            FMT
+                        )
+                        logging.debug(msg=f"Sending packet {(header + lookup).decode(FMT)}")
+                        client_send_socket.send(header + lookup)
+                        res_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
+                        if res_type not in [
+                            HeaderCode.REQUEST_UNAME.value,
+                            HeaderCode.ERROR.value,
+                        ]:
+                            raise RequestException(
+                                msg="Invalid message type in header",
+                                code=ExceptionCode.INVALID_HEADER,
+                            )
+                        else:
+                            response_length = int(
+                                client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip()
+                            )
+                            response = client_send_socket.recv(response_length)
+                            if res_type == HeaderCode.REQUEST_UNAME.value:
+                                username = response.decode(FMT)
+                                print(f"\nUser {username} is trying to send a message")
+                                peers[peer_addr[0]] = username
+                            else:
+                                exception = msgpack.unpackb(
+                                    response,
+                                    object_hook=RequestException.from_dict,
+                                    raw=False,
+                                )
+                                logging.error(msg=exception)
+                                raise exception
+                    except RequestException as e:
+                        logging.error(msg=e)
+                        break
+                else:
+                    try:
+                        message_content: str = self.receive_msg(notified_socket)
+                        username = peers[notified_socket.getpeername()[0]]
+                        message: Message = {"sender": username, "content": message_content}
+                        messages_store[username].append(message)
+                        self.message_received.emit(message)
+
+                    except RequestException as e:
+                        if e.code == ExceptionCode.DISCONNECT:
+                            try:
+                                connected.remove(notified_socket)
+                            except ValueError:
+                                logging.info("already removed")
+                        logging.error(msg=f"Exception: {e.msg}")
+                        break
+
+
 class Ui_DrizzleMainWindow(QWidget):
     global client_send_socket
     global client_recv_socket
@@ -75,7 +317,8 @@ class Ui_DrizzleMainWindow(QWidget):
             SERVER_IP = MainWindow.user_settings["server_ip"]
             SERVER_ADDR = (SERVER_IP, SERVER_RECV_PORT)
             client_send_socket.connect(SERVER_ADDR)
-            username = MainWindow.user_settings["uname"].encode(FMT)
+            self_uname = MainWindow.user_settings["uname"]
+            username = self_uname.encode(FMT)
             username_header = (
                 f"{HeaderCode.NEW_CONNECTION.value}{len(username):<{HEADER_MSG_LEN}}".encode(FMT)
             )
@@ -111,9 +354,40 @@ class Ui_DrizzleMainWindow(QWidget):
             self.heartbeat_worker.update_status.connect(self.update_online_status)
             self.heartbeat_thread.start()
 
+            self.receive_thread = QThread()
+            self.receive_worker = ReceiveWorker()
+            self.receive_worker.moveToThread(self.receive_thread)
+            self.receive_thread.started.connect(self.receive_worker.run)
+            self.receive_worker.message_received.connect(self.messages_controller)
+            self.receive_thread.start()
+
         except Exception as e:
             logging.error(f"Could not connect to server: {e}")
         self.setupUi(MainWindow)
+
+    def send_message(self):
+        global client_send_socket
+        global client_recv_socket
+        global messages_store
+        global selected_uname
+
+        peer_ip = request_ip(selected_uname, client_send_socket)
+        client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client_peer_socket.connect((peer_ip, CLIENT_RECV_PORT))
+        if peer_ip is not None:
+            msg = self.txtedit_MessageInput.toPlainText()
+            msg_bytes = msg.encode(FMT)
+            header = f"{HeaderCode.MESSAGE.value}{len(msg_bytes):<{HEADER_MSG_LEN}}".encode(FMT)
+            try:
+                client_peer_socket.send(header + msg_bytes)
+                messages_store[selected_uname].append({"sender": self_uname, "content": msg})
+                self.render_messages(messages_store[selected_uname])
+            except Exception as e:
+                logging.error(f"Failed to send message: {e}")
+            finally:
+                self.txtedit_MessageInput.clear()
+        else:
+            logging.error(f"Could not find ip for user {selected_uname}")
 
     def closeEvent(self, event) -> None:
         self.heartbeat_thread.exit()
@@ -130,6 +404,28 @@ class Ui_DrizzleMainWindow(QWidget):
                 dir_item = QTreeWidgetItem(parent)
                 dir_item.setText(0, item["name"] + "/")
                 self.render_file_tree(item["children"], dir_item)
+
+    def construct_message_html(self, message: Message, is_self: bool):
+        return f"""
+                    <p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">
+                        <span style=" font-weight:600; color:{'#1a5fb4' if is_self else '#e5a50a'};"> {"You" if is_self else message["sender"]}: </span>
+                        {message["content"]}
+                    </p>
+        """
+
+    def messages_controller(self, message: Message):
+        global selected_uname
+        global self_uname
+        if message["sender"] == selected_uname:
+            self.render_messages(messages_store[selected_uname])
+
+    def render_messages(self, messages_list: list[Message]):
+        global self_uname
+        messages_html = LEADING_HTML
+        for message in messages_list:
+            messages_html += self.construct_message_html(message, message["sender"] == self_uname)
+        messages_html += TRAILING_HTML
+        self.txtedit_MessagesArea.setHtml(messages_html)
 
     def update_online_status(self, new_status: dict[str, int]):
         global uname_to_status
@@ -181,10 +477,12 @@ class Ui_DrizzleMainWindow(QWidget):
         uname_to_status = new_status
 
     def on_user_selected(self):
+        global selected_uname
         items = self.lw_OnlineStatus.selectedItems()
         if len(items):
             item = items[0]
             username: str = item.data(Qt.UserRole)
+            selected_uname = username
             if time.time() - uname_to_status[username] > ONLINE_TIMEOUT:
                 self.file_tree.clear()
                 self.file_tree.headerItem().setText(0, "Selected user is offline")
@@ -344,51 +642,53 @@ class Ui_DrizzleMainWindow(QWidget):
 
         self.Users.addWidget(self.lw_OnlineStatus)
 
-        self.textEdit = QTextEdit(self.centralwidget)
-        self.textEdit.setObjectName("textEdit")
+        self.txtedit_MessagesArea = QTextEdit(self.centralwidget)
+        self.txtedit_MessagesArea.setObjectName("textEdit")
         sizePolicy2 = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         sizePolicy2.setHorizontalStretch(0)
         sizePolicy2.setVerticalStretch(5)
-        sizePolicy2.setHeightForWidth(self.textEdit.sizePolicy().hasHeightForWidth())
-        self.textEdit.setSizePolicy(sizePolicy2)
-        self.textEdit.setMinimumSize(QSize(0, 0))
-        self.textEdit.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        sizePolicy2.setHeightForWidth(self.txtedit_MessagesArea.sizePolicy().hasHeightForWidth())
+        self.txtedit_MessagesArea.setSizePolicy(sizePolicy2)
+        self.txtedit_MessagesArea.setMinimumSize(QSize(0, 0))
+        self.txtedit_MessagesArea.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
-        self.Users.addWidget(self.textEdit)
+        self.Users.addWidget(self.txtedit_MessagesArea)
 
         self.horizontalLayout = QHBoxLayout()
         self.horizontalLayout.setObjectName("horizontalLayout")
         self.horizontalLayout.setSizeConstraint(QLayout.SetDefaultConstraint)
-        self.plainTextEdit = QPlainTextEdit(self.centralwidget)
-        self.plainTextEdit.setObjectName("plainTextEdit")
-        self.plainTextEdit.setEnabled(True)
+
+        self.txtedit_MessageInput = QPlainTextEdit(self.centralwidget)
+        self.txtedit_MessageInput.setObjectName("plainTextEdit")
+        self.txtedit_MessageInput.setEnabled(True)
         sizePolicy3 = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         sizePolicy3.setHorizontalStretch(0)
         sizePolicy3.setVerticalStretch(0)
-        sizePolicy3.setHeightForWidth(self.plainTextEdit.sizePolicy().hasHeightForWidth())
-        self.plainTextEdit.setSizePolicy(sizePolicy3)
-        self.plainTextEdit.setMaximumSize(QSize(16777215, 80))
+        sizePolicy3.setHeightForWidth(self.txtedit_MessageInput.sizePolicy().hasHeightForWidth())
+        self.txtedit_MessageInput.setSizePolicy(sizePolicy3)
+        self.txtedit_MessageInput.setMaximumSize(QSize(16777215, 80))
 
-        self.horizontalLayout.addWidget(self.plainTextEdit)
+        self.horizontalLayout.addWidget(self.txtedit_MessageInput)
 
         self.verticalLayout_6 = QVBoxLayout()
         self.verticalLayout_6.setObjectName("verticalLayout_6")
-        self.pushButton_3 = QPushButton(self.centralwidget)
-        self.pushButton_3.setObjectName("pushButton_3")
+        self.btn_SendMessage = QPushButton(self.centralwidget)
+        self.btn_SendMessage.setObjectName("pushButton_3")
         sizePolicy4 = QSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
         sizePolicy4.setHorizontalStretch(0)
         sizePolicy4.setVerticalStretch(0)
-        sizePolicy4.setHeightForWidth(self.pushButton_3.sizePolicy().hasHeightForWidth())
-        self.pushButton_3.setSizePolicy(sizePolicy4)
+        sizePolicy4.setHeightForWidth(self.btn_SendMessage.sizePolicy().hasHeightForWidth())
+        self.btn_SendMessage.setSizePolicy(sizePolicy4)
+        self.btn_SendMessage.clicked.connect(self.send_message)
 
-        self.verticalLayout_6.addWidget(self.pushButton_3)
+        self.verticalLayout_6.addWidget(self.btn_SendMessage)
 
-        self.pushButton_6 = QPushButton(self.centralwidget)
-        self.pushButton_6.setObjectName("pushButton_6")
-        sizePolicy4.setHeightForWidth(self.pushButton_6.sizePolicy().hasHeightForWidth())
-        self.pushButton_6.setSizePolicy(sizePolicy4)
+        self.btn_SendFile = QPushButton(self.centralwidget)
+        self.btn_SendFile.setObjectName("pushButton_6")
+        sizePolicy4.setHeightForWidth(self.btn_SendFile.sizePolicy().hasHeightForWidth())
+        self.btn_SendFile.setSizePolicy(sizePolicy4)
 
-        self.verticalLayout_6.addWidget(self.pushButton_6)
+        self.verticalLayout_6.addWidget(self.btn_SendFile)
 
         self.horizontalLayout.addLayout(self.verticalLayout_6)
 
@@ -665,28 +965,28 @@ class Ui_DrizzleMainWindow(QWidget):
         # ___qlistwidgetitem3.setText(QCoreApplication.translate("MainWindow", "anonymous_lol", None))
         self.lw_OnlineStatus.setSortingEnabled(__sortingEnabled1)
 
-        self.textEdit.setHtml(
-            QCoreApplication.translate(
-                "MainWindow",
-                '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0//EN" "http://www.w3.org/TR/REC-html40/strict.dtd">\n'
-                '<html><head><meta name="qrichtext" content="1" /><style type="text/css">\n'
-                "p, li { white-space: pre-wrap; }\n"
-                "</style></head><body style=\" font-family:'Noto Sans'; font-size:10pt; font-weight:400; font-style:normal;\">\n"
-                '<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"><span style=" font-weight:600; color:#e5a50a;">12:03</span><span style=" font-weight:600;"> RichardRoe12: </span>Hello</p>\n'
-                '<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"><span style=" font-weight:600; color:#1a5fb4;">12:03</span><span style=" font-weight:600;"> You: </span>Hii</p>\n'
-                '<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"><span style=" font-weight:600; color:#e5a50a;">12:03</span><span style="'
-                ' font-weight:600;"> RichardRoe12: </span>Got any games?</p>\n'
-                '<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"><span style=" font-weight:600; color:#1a5fb4;">12:03</span><span style=" font-weight:600;"> You: </span>Probably</p>\n'
-                '<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"><span style=" font-weight:600; color:#1a5fb4;">12:03</span><span style=" font-weight:600;"> You: </span>Wait ill upload something...</p>',
-                "</body></html>",
-                # None,
-            )
-        )
-        self.plainTextEdit.setPlaceholderText(
+        # self.txtedit_MessagesArea.setHtml(
+        #     QCoreApplication.translate(
+        #         "MainWindow",
+        #         '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0//EN" "http://www.w3.org/TR/REC-html40/strict.dtd">\n'
+        #         '<html><head><meta name="qrichtext" content="1" /><style type="text/css">\n'
+        #         "p, li { white-space: pre-wrap; }\n"
+        #         "</style></head><body style=\" font-family:'Noto Sans'; font-size:10pt; font-weight:400; font-style:normal;\">\n"
+        #         '<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"><span style=" font-weight:600; color:#e5a50a;">12:03</span><span style=" font-weight:600;"> RichardRoe12: </span>Hello</p>\n'
+        #         '<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"><span style=" font-weight:600; color:#1a5fb4;">12:03</span><span style=" font-weight:600;"> You: </span>Hii</p>\n'
+        #         '<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"><span style=" font-weight:600; color:#e5a50a;">12:03</span><span style="'
+        #         ' font-weight:600;"> RichardRoe12: </span>Got any games?</p>\n'
+        #         '<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"><span style=" font-weight:600; color:#1a5fb4;">12:03</span><span style=" font-weight:600;"> You: </span>Probably</p>\n'
+        #         '<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"><span style=" font-weight:600; color:#1a5fb4;">12:03</span><span style=" font-weight:600;"> You: </span>Wait ill upload something...</p>',
+        #         "</body></html>",
+        #         # None,
+        #     )
+        # )
+        self.txtedit_MessageInput.setPlaceholderText(
             QCoreApplication.translate("MainWindow", "Enter message", None)
         )
-        self.pushButton_3.setText(QCoreApplication.translate("MainWindow", "Send Message", None))
-        self.pushButton_6.setText(QCoreApplication.translate("MainWindow", "Send File", None))
+        self.btn_SendMessage.setText(QCoreApplication.translate("MainWindow", "Send Message", None))
+        self.btn_SendFile.setText(QCoreApplication.translate("MainWindow", "Send File", None))
         self.label_12.setText(QCoreApplication.translate("MainWindow", "Downloading:", None))
         self.label_10.setText(QCoreApplication.translate("MainWindow", "TextLabel", None))
         self.label_7.setText(QCoreApplication.translate("MainWindow", "TextLabel", None))

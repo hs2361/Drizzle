@@ -86,3 +86,8 @@ class UserSettings(TypedDict):
     server_ip: str
     share_folder_path: str
     downloads_folder_path: str
+
+
+class Message(TypedDict):
+    sender: str
+    content: str

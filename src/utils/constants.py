@@ -15,5 +15,18 @@ HASH_BUFFER_LEN = 16 * 2 ** 20  # 16MB
 COMPRESSION_THRESHOLD = 500 * 2 ** 20  # 500MB
 SERVER_RECV_PORT = 1234
 MESSAGE_MAX_LEN = 256
-ONLINE_TIMEOUT = 15  # seconds
+ONLINE_TIMEOUT = 10  # seconds
 HEARTBEAT_TIMER = 5  # seconds
+LEADING_HTML = """
+    <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0//EN" "http://www.w3.org/TR/REC-html40/strict.dtd">
+    <html>
+        <head>
+            <meta name="qrichtext" content="1" />
+            <style type="text/css">p, li { white-space: pre-wrap; }</style>
+        </head>
+        <body style=\" font-family:"Noto Sans"; font-size:10pt; font-weight:400; font-style:normal;\">
+"""
+TRAILING_HTML = """
+        </body>
+    </html>
+"""
