@@ -6,7 +6,7 @@ from pathlib import Path
 
 import msgpack
 from PyQt5.QtCore import *
-from PyQt5.QtGui import *
+from PyQt5.QtGui import QFont, QIcon
 from PyQt5.QtWidgets import *
 
 sys.path.append("../")
@@ -21,9 +21,9 @@ from utils.constants import (
     SERVER_RECV_PORT,
 )
 from utils.exceptions import ExceptionCode, RequestException
-from utils.helpers import path_to_dict
-from utils.socket_functions import get_ip
-from utils.types import HeaderCode
+from utils.helpers import display_share_dict, path_to_dict
+from utils.socket_functions import get_ip, recvall
+from utils.types import DBData, HeaderCode
 
 SERVER_IP = ""
 SERVER_ADDR = ()
@@ -43,11 +43,10 @@ uname_to_status: dict[str, int] = {}
 
 
 class HeartbeatWorker(QObject):
-    update_status = pyqtSignal()
+    update_status = pyqtSignal(dict)
 
     def run(self):
         global client_send_socket
-        global uname_to_status
         heartbeat = HeaderCode.HEARTBEAT_REQUEST.value.encode(FMT)
         while True:
             time.sleep(HEARTBEAT_TIMER)
@@ -56,8 +55,8 @@ class HeartbeatWorker(QObject):
 
             if type == HeaderCode.HEARTBEAT_REQUEST.value:
                 length = int(client_send_socket.recv((HEADER_MSG_LEN)).decode(FMT))
-                uname_to_status = msgpack.unpackb(client_send_socket.recv(length))
-                self.update_status.emit()
+                new_status = msgpack.unpackb(client_send_socket.recv(length))
+                self.update_status.emit(new_status)
             else:
                 raise RequestException(
                     f"Server sent invalid message type in header: {type}",
@@ -97,7 +96,6 @@ class Ui_DrizzleMainWindow(QWidget):
                     client_send_socket.close()
                     client_recv_socket.close()
                     MainWindow.close()
-            #
             share_data = msgpack.packb(
                 path_to_dict(Path(MainWindow.user_settings["share_folder_path"]))["children"]
             )
@@ -121,20 +119,75 @@ class Ui_DrizzleMainWindow(QWidget):
         self.heartbeat_thread.exit()
         return super().closeEvent(event)
 
-    def updateOnlineStatus(self):
-        logging.debug(f"Update online status to {uname_to_status}")
-        self.lw_OnlineStatus.clear()
-        for uname, last_seen in uname_to_status.items():
+    def updateOnlineStatus(self, new_status: dict[str, int]):
+        global uname_to_status
+        old_users = set(uname_to_status.keys())
+        new_users = set(new_status.keys())
+        to_add = new_users.difference(old_users)
+        users_to_remove = old_users.difference(new_users)
+
+        for index in range(self.lw_OnlineStatus.count()):
+            item = self.lw_OnlineStatus.item(index)
+            username = item.data(Qt.UserRole)  # type: ignore
+            if username in users_to_remove:
+                item.setIcon(self.icon_Offline)
+                timestamp = time.localtime(uname_to_status[username])
+                item.setText(
+                    username + f" (last active: {time.strftime('%d-%m-%Y %H:%M:%S', timestamp)})"
+                )
+            else:
+                item.setIcon(
+                    self.icon_Online
+                    if time.time() - new_status[username] <= ONLINE_TIMEOUT
+                    else self.icon_Offline
+                )
+                timestamp = time.localtime(new_status[username])
+                item.setText(
+                    username + ""
+                    if time.time() - new_status[username] <= ONLINE_TIMEOUT
+                    else f" (last active: {time.strftime('%d-%m-%Y %H:%M:%S', timestamp)})"
+                )
+
+        for uname in to_add:
             status_item = QListWidgetItem(self.lw_OnlineStatus)
             status_item.setIcon(
-                self.icon_Online if time.time() - last_seen <= ONLINE_TIMEOUT else self.icon_Offline
+                self.icon_Online
+                if time.time() - new_status[uname] <= ONLINE_TIMEOUT
+                else self.icon_Offline
             )
-            timestamp = time.localtime(last_seen)
+            timestamp = time.localtime(new_status[uname])
+            status_item.setData(Qt.UserRole, uname)  # type: ignore
             status_item.setText(
                 uname + ""
-                if time.time() - last_seen <= ONLINE_TIMEOUT
+                if time.time() - new_status[uname] <= ONLINE_TIMEOUT
                 else f" (last active: {time.strftime('%d-%m-%Y %H:%M:%S', timestamp)})"
             )
+        uname_to_status = new_status
+
+    def on_user_selected(self):
+        items = self.lw_OnlineStatus.selectedItems()
+        if len(items):
+            item = items[0]
+            username: str = item.data(Qt.UserRole)
+            searchquery_bytes = username.encode(FMT)
+            search_header = (
+                f"{HeaderCode.FILE_SEARCH.value}{len(searchquery_bytes):<{HEADER_MSG_LEN}}".encode(
+                    FMT
+                )
+            )
+            client_send_socket.send(search_header + searchquery_bytes)
+            response_header_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
+            if response_header_type == HeaderCode.FILE_SEARCH.value:
+                response_len = int(client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip())
+                browse_files: list[DBData] = msgpack.unpackb(
+                    recvall(client_send_socket, response_len),
+                )
+                if len(browse_files):
+                    display_share_dict(browse_files[0]["share"], 1)
+                else:
+                    print("No files found")
+            else:
+                logging.error("Error occured while searching for files")
 
     def setupUi(self, MainWindow):
         if not MainWindow.objectName():
@@ -255,18 +308,14 @@ class Ui_DrizzleMainWindow(QWidget):
         self.Users.addWidget(self.label_2)
 
         self.lw_OnlineStatus = QListWidget(self.centralwidget)
+        self.lw_OnlineStatus.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.lw_OnlineStatus.itemSelectionChanged.connect(self.on_user_selected)
         self.icon_Online = QIcon()
         self.icon_Online.addFile("ui/res/earth.png", QSize(), QIcon.Normal, QIcon.Off)
-        # __qlistwidgetitem = QListWidgetItem(self.listWidget)
-        # __qlistwidgetitem.setIcon(icon)
-        # __qlistwidgetitem1 = QListWidgetItem(self.listWidget)
-        # __qlistwidgetitem1.setIcon(icon)
+
         self.icon_Offline = QIcon()
         self.icon_Offline.addFile("ui/res/web-off.png", QSize(), QIcon.Normal, QIcon.Off)
-        # __qlistwidgetitem2 = QListWidgetItem(self.listWidget)
-        # __qlistwidgetitem2.setIcon(icon1)
-        # __qlistwidgetitem3 = QListWidgetItem(self.listWidget)
-        # __qlistwidgetitem3.setIcon(icon)
+
         self.lw_OnlineStatus.setObjectName("listWidget")
         self.lw_OnlineStatus.setSortingEnabled(False)
 

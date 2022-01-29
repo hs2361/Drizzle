@@ -241,12 +241,14 @@ def read_handler(notified_socket: socket.socket) -> None:
                         )
                 case HeaderCode.FILE_SEARCH:
                     username = ip_to_uname.get(notified_socket.getpeername()[0])
-                    user_exists = uname_to_ip.get(request["query"], False)
-                    if username != request["query"] and user_exists:
+                    user_exists = uname_to_ip.get(request["query"].decode(FMT), False)
+                    # if username != request["query"] and user_exists:
+                    if username is not None and user_exists:
                         User = Query()
                         browse_files: list[DBData] = drizzle_db.search(
-                            User.uname == request["query"]
+                            User.uname == request["query"].decode(FMT)
                         )
+                        print(browse_files)
                         browse_files_bytes = msgpack.packb(browse_files)
                         browse_files_header = f"{HeaderCode.FILE_SEARCH.value}{len(browse_files_bytes):<{HEADER_MSG_LEN}}".encode(
                             FMT
@@ -254,9 +256,14 @@ def read_handler(notified_socket: socket.socket) -> None:
                         notified_socket.sendall(browse_files_header + browse_files_bytes)
                     else:
                         raise RequestException(
-                            msg=f"Cannot search for own files",
-                            code=ExceptionCode.BAD_REQUEST,
+                            msg=f"User does not exist, {request['query'].decode(FMT)}",
+                            code=ExceptionCode.NOT_FOUND,
                         )
+                    # else:
+                    #     raise RequestException(
+                    #         msg=f"Cannot search for own files",
+                    #         code=ExceptionCode.BAD_REQUEST,
+                    #     )
 
                 case HeaderCode.HEARTBEAT_REQUEST:
                     username = ip_to_uname.get(notified_socket.getpeername()[0])
