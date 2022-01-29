@@ -63,7 +63,7 @@ def receive_msg(client_socket: socket.socket) -> Message:
     ]:
         logging.error(msg=f"Received message type {message_type}")
         raise RequestException(
-            msg=f"Invalid message type in header, rexeived: {message_type}",
+            msg=f"Invalid message type in header, received: {message_type}",
             code=ExceptionCode.INVALID_HEADER,
         )
     elif message_type == HeaderCode.HEARTBEAT_REQUEST.value:

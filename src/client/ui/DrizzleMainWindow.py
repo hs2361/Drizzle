@@ -141,11 +141,12 @@ class Ui_DrizzleMainWindow(QWidget):
         for index in range(self.lw_OnlineStatus.count()):
             item = self.lw_OnlineStatus.item(index)
             username = item.data(Qt.UserRole)  # type: ignore
+            logging.debug(username)
             if username in users_to_remove:
                 item.setIcon(self.icon_Offline)
                 timestamp = time.localtime(uname_to_status[username])
                 item.setText(
-                    username + f" (last active: {time.strftime('%d-%m-%Y %H:%M:%S', timestamp)})"
+                    username + (f" (last active: {time.strftime('%d-%m-%Y %H:%M:%S', timestamp)})")
                 )
             else:
                 item.setIcon(
@@ -155,9 +156,12 @@ class Ui_DrizzleMainWindow(QWidget):
                 )
                 timestamp = time.localtime(new_status[username])
                 item.setText(
-                    username + ""
-                    if time.time() - new_status[username] <= ONLINE_TIMEOUT
-                    else f" (last active: {time.strftime('%d-%m-%Y %H:%M:%S', timestamp)})"
+                    username
+                    + (
+                        ""
+                        if time.time() - new_status[username] <= ONLINE_TIMEOUT
+                        else f" (last active: {time.strftime('%d-%m-%Y %H:%M:%S', timestamp)})"
+                    )
                 )
 
         for uname in to_add:
@@ -181,6 +185,10 @@ class Ui_DrizzleMainWindow(QWidget):
         if len(items):
             item = items[0]
             username: str = item.data(Qt.UserRole)
+            if time.time() - uname_to_status[username] > ONLINE_TIMEOUT:
+                self.file_tree.clear()
+                self.file_tree.headerItem().setText(0, "Selected user is offline")
+                return
             searchquery_bytes = username.encode(FMT)
             search_header = (
                 f"{HeaderCode.FILE_SEARCH.value}{len(searchquery_bytes):<{HEADER_MSG_LEN}}".encode(
