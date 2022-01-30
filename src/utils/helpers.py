@@ -1,27 +1,27 @@
 import hashlib
 import logging
+import math
 import os
 from pathlib import Path
 
-from prompt_toolkit.validation import ValidationError, Validator
-
-from utils.constants import (
+from utils.constants import (  # MESSAGE_MAX_LEN,
     HASH_BUFFER_LEN,
-    MESSAGE_MAX_LEN,
     RECV_FOLDER_PATH,
     SHARE_FOLDER_PATH,
     TEMP_FOLDER_PATH,
 )
 from utils.types import CompressionMethod, DirData, FileMetadata, TransferProgress, TransferStatus
 
+# from prompt_toolkit.validation import ValidationError, Validator
 
-class MessageLenValidator(Validator):
-    def validate(self, document) -> None:
-        text = document.text
-        if len(text) > MESSAGE_MAX_LEN:
-            raise ValidationError(
-                message=f"Message is too long. Limit to {MESSAGE_MAX_LEN} characters"
-            )
+
+# class MessageLenValidator(Validator):
+#     def validate(self, document) -> None:
+#         text = document.text
+#         if len(text) > MESSAGE_MAX_LEN:
+#             raise ValidationError(
+#                 message=f"Message is too long. Limit to {MESSAGE_MAX_LEN} characters"
+#             )
 
 
 def generate_transfer_progress() -> dict[Path, TransferProgress]:
@@ -150,7 +150,23 @@ def get_pending_downloads(transfer_progress: dict[Path, TransferProgress]) -> st
     )
 
 
-def import_share_file(file_path: Path, share_folder_path: Path) -> Path | None:
+def get_directory_size(directory: DirData, size: int, count: int) -> tuple[int, int]:
+    if directory["children"] is None:
+        count += 1
+        size += directory["size"]
+    else:
+        for child in directory["children"]:
+            if child["type"] == "file":
+                count += 1
+                size += child["size"]
+            else:
+                child_size, child_count = get_directory_size(child, size, count)
+                size += child_size
+                count += child_count
+    return size, count
+
+
+def import_file_to_share(file_path: Path, share_folder_path: Path) -> Path | None:
     if file_path.exists():
         imported_file = share_folder_path / file_path.name
         imported_file.symlink_to(file_path, target_is_directory=file_path.is_dir())
@@ -158,3 +174,13 @@ def import_share_file(file_path: Path, share_folder_path: Path) -> Path | None:
     else:
         logging.error(f"Attempted to import file {str(file_path)} that does not exist")
         return None
+
+
+def convert_size(size_bytes: int) -> str:
+    if size_bytes == 0:
+        return "0B"
+    size_name = ["B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"]
+    i = int(math.floor(math.log(size_bytes, 1024)))
+    p = math.pow(1024, i)
+    s = round(size_bytes / p, 2)
+    return f"{s} {size_name[i]}"

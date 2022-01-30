@@ -35,7 +35,7 @@ class TransferProgress(TypedDict):
     progress: int
 
 
-class Message(TypedDict):
+class SocketMessage(TypedDict):
     type: HeaderCode
     query: bytes
 

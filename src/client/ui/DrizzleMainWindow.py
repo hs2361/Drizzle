@@ -1,3 +1,4 @@
+import json
 import logging
 import select
 import socket
@@ -30,7 +31,14 @@ from utils.constants import (
     TRAILING_HTML,
 )
 from utils.exceptions import ExceptionCode, RequestException
-from utils.helpers import get_file_hash, get_unique_filename, import_share_file, path_to_dict
+from utils.helpers import (
+    convert_size,
+    get_directory_size,
+    get_file_hash,
+    get_unique_filename,
+    import_file_to_share,
+    path_to_dict,
+)
 from utils.socket_functions import get_ip, recvall, request_ip, update_share_data
 from utils.types import (
     DBData,
@@ -64,6 +72,7 @@ connected = [client_recv_socket]
 uname_to_status: dict[str, int] = {}
 messages_store: dict[str, list[Message]] = {}
 selected_uname: str = ""
+selected_file_item: DirData = {}
 self_uname: str = ""
 
 
@@ -97,7 +106,7 @@ class HeartbeatWorker(QObject):
                 sys.exit(error_dialog.exec())
 
 
-class ReceiveWorker(QObject):
+class ReceiveHandler(QObject):
     message_received = pyqtSignal(dict)
 
     def send_file(
@@ -372,7 +381,7 @@ class Ui_DrizzleMainWindow(QWidget):
             self.heartbeat_thread.start()
 
             self.receive_thread = QThread()
-            self.receive_worker = ReceiveWorker()
+            self.receive_worker = ReceiveHandler()
             self.receive_worker.moveToThread(self.receive_thread)
             self.receive_thread.started.connect(self.receive_worker.run)
             self.receive_worker.message_received.connect(self.messages_controller)
@@ -430,10 +439,39 @@ class Ui_DrizzleMainWindow(QWidget):
             if item["type"] == "file":
                 file_item = QTreeWidgetItem(parent)
                 file_item.setText(0, item["name"])
+                file_item.setData(0, Qt.UserRole, item)
             else:
                 dir_item = QTreeWidgetItem(parent)
                 dir_item.setText(0, item["name"] + "/")
+                dir_item.setData(0, Qt.UserRole, item)
                 self.render_file_tree(item["children"], dir_item)
+
+    def on_file_item_selected(self, item: QTreeWidgetItem, column: int):
+        global selected_file_item
+        data: DirData = item.data(column, Qt.UserRole)
+        selected_file_item = data
+        self.lbl_FileInfo.setText(data["name"])
+
+    def show_file_info_dialog(self, MainWindow):
+        global selected_file_item
+        size = selected_file_item["size"]
+        item_info = {
+            "name": selected_file_item["name"],
+            "hash": selected_file_item["hash"] or "Not available",
+            "type": selected_file_item["type"],
+            "size": convert_size(size or 0),
+        }
+        if selected_file_item["type"] != "file":
+            size, count = get_directory_size(selected_file_item, 0, 0)
+            item_info["size"] = convert_size(size)
+            item_info["count"] = f"{count} files"
+        message_box = QMessageBox(MainWindow)
+        message_box.setIcon(QMessageBox.Information)
+        message_box.setWindowTitle("File Info")
+        message_box.setText(selected_file_item["name"])
+        message_box.setInformativeText(json.dumps(item_info, indent=4, sort_keys=True))
+        message_box.addButton(QMessageBox.Close)
+        message_box.exec()
 
     def construct_message_html(self, message: Message, is_self: bool):
         return f"""<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">
@@ -557,13 +595,6 @@ class Ui_DrizzleMainWindow(QWidget):
                 )
                 error_dialog.exec()
 
-    # def center(self):
-    #     frameGm = self.frameGeometry()
-    #     screen = QApplication.desktop().screenNumber(QApplication.desktop().cursor().pos())
-    #     centerPoint = QApplication.desktop().screenGeometry(screen).center()
-    #     frameGm.moveCenter(centerPoint)
-    #     self.move(frameGm.topLeft())
-
     def setupUi(self, MainWindow):
         if not MainWindow.objectName():
             MainWindow.setObjectName("MainWindow")
@@ -634,6 +665,7 @@ class Ui_DrizzleMainWindow(QWidget):
         self.Files.addWidget(self.label)
 
         self.file_tree = QTreeWidget(self.centralwidget)
+        self.file_tree.itemClicked.connect(self.on_file_item_selected)
         self.file_tree.header().setVisible(True)
         self.file_tree.headerItem().setText(0, "No user selected")
 
@@ -641,26 +673,27 @@ class Ui_DrizzleMainWindow(QWidget):
 
         self.horizontalLayout_2 = QHBoxLayout()
         self.horizontalLayout_2.setObjectName("horizontalLayout_2")
-        self.label_4 = QLabel(self.centralwidget)
-        self.label_4.setObjectName("label_4")
+        self.lbl_FileInfo = QLabel(self.centralwidget)
+        self.lbl_FileInfo.setObjectName("label_4")
 
-        self.horizontalLayout_2.addWidget(self.label_4)
+        self.horizontalLayout_2.addWidget(self.lbl_FileInfo)
 
         self.horizontalSpacer_2 = QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum)
 
         self.horizontalLayout_2.addItem(self.horizontalSpacer_2)
 
-        self.pushButton_5 = QPushButton(self.centralwidget)
-        self.pushButton_5.setObjectName("pushButton_5")
-        self.pushButton_5.setEnabled(True)
+        self.btn_FileInfo = QPushButton(self.centralwidget)
+        self.btn_FileInfo.setObjectName("pushButton_5")
+        self.btn_FileInfo.setEnabled(True)
+        self.btn_FileInfo.clicked.connect(lambda: self.show_file_info_dialog(MainWindow))
 
-        self.horizontalLayout_2.addWidget(self.pushButton_5)
+        self.horizontalLayout_2.addWidget(self.btn_FileInfo)
 
-        self.pushButton_4 = QPushButton(self.centralwidget)
-        self.pushButton_4.setObjectName("pushButton_4")
-        self.pushButton_4.setEnabled(True)
+        self.btn_FileDownload = QPushButton(self.centralwidget)
+        self.btn_FileDownload.setObjectName("pushButton_4")
+        self.btn_FileDownload.setEnabled(True)
 
-        self.horizontalLayout_2.addWidget(self.pushButton_4)
+        self.horizontalLayout_2.addWidget(self.btn_FileDownload)
 
         self.Files.addLayout(self.horizontalLayout_2)
 
@@ -932,7 +965,6 @@ class Ui_DrizzleMainWindow(QWidget):
         MainWindow.setCentralWidget(self.centralwidget)
 
         self.retranslateUi(MainWindow)
-        # self.center()
 
         QMetaObject.connectSlotsByName(MainWindow)
 
@@ -955,11 +987,11 @@ class Ui_DrizzleMainWindow(QWidget):
         __sortingEnabled = self.file_tree.isSortingEnabled()
         self.file_tree.setSortingEnabled(__sortingEnabled)
 
-        self.label_4.setText(
-            QCoreApplication.translate("MainWindow", "Selected File/Folder: msoffice.zip", None)
+        self.lbl_FileInfo.setText(
+            QCoreApplication.translate("MainWindow", "No file or folder selected", None)
         )
-        self.pushButton_5.setText(QCoreApplication.translate("MainWindow", "Info", None))
-        self.pushButton_4.setText(QCoreApplication.translate("MainWindow", "Download", None))
+        self.btn_FileInfo.setText(QCoreApplication.translate("MainWindow", "Info", None))
+        self.btn_FileDownload.setText(QCoreApplication.translate("MainWindow", "Download", None))
         self.label_2.setText(QCoreApplication.translate("MainWindow", "Users", None))
 
         __sortingEnabled1 = self.lw_OnlineStatus.isSortingEnabled()
@@ -990,7 +1022,9 @@ class Ui_DrizzleMainWindow(QWidget):
             self, "Import Files", str(Path.home()), "All Files (*)"
         )
         for file in files:
-            imported = import_share_file(Path(file), Path(self.user_settings["share_folder_path"]))
+            imported = import_file_to_share(
+                Path(file), Path(self.user_settings["share_folder_path"])
+            )
             if imported is not None:
                 print(f"Imported file {imported}")
         update_share_data(Path(self.user_settings["share_folder_path"]), client_send_socket)
@@ -999,7 +1033,7 @@ class Ui_DrizzleMainWindow(QWidget):
         dir = QFileDialog.getExistingDirectory(
             self, "Import Folder", str(Path.home()), QFileDialog.ShowDirsOnly
         )
-        imported = import_share_file(Path(dir), Path(self.user_settings["share_folder_path"]))
+        imported = import_file_to_share(Path(dir), Path(self.user_settings["share_folder_path"]))
         if imported is not None:
             print(f"Imported file {imported}")
         update_share_data(Path(self.user_settings["share_folder_path"]), client_send_socket)

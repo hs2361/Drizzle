@@ -13,7 +13,7 @@ from utils.constants import FMT, HEADER_MSG_LEN, HEADER_TYPE_LEN, SERVER_RECV_PO
 from utils.exceptions import ExceptionCode, RequestException
 from utils.helpers import update_file_hash
 from utils.socket_functions import get_ip, recvall
-from utils.types import DBData, DirData, HeaderCode, Message, UpdateHashParams
+from utils.types import DBData, DirData, HeaderCode, SocketMessage, UpdateHashParams
 
 IP = get_ip()
 
@@ -45,7 +45,7 @@ ip_to_uname: dict[str, str] = {}
 uname_to_status: dict[str, int] = {}
 
 
-def receive_msg(client_socket: socket.socket) -> Message:
+def receive_msg(client_socket: socket.socket) -> SocketMessage:
     message_type = client_socket.recv(HEADER_TYPE_LEN).decode(FMT)
     if not len(message_type):
         raise RequestException(
@@ -82,17 +82,7 @@ def read_handler(notified_socket: socket.socket) -> None:
     global sockets_list
     if notified_socket == server_socket:
         client_socket, client_addr = server_socket.accept()
-        # try:
         sockets_list.append(client_socket)
-        # except RequestException as e:
-        #     if e.code != ExceptionCode.DISCONNECT:
-        #         data: bytes = msgpack.packb(e, default=RequestException.to_dict, use_bin_type=True)
-        #         header = f"{HeaderCode.ERROR.value}{len(data):<{HEADER_MSG_LEN}}".encode(FMT)
-        #         client_socket.send(header + data)
-        #     uname = ip_to_uname.pop(client_addr[0], None)
-        #     uname_to_ip.pop(uname, None)
-        #     logging.error(msg=e.msg)
-        #     return
     else:
         try:
             request = receive_msg(notified_socket)
@@ -311,6 +301,4 @@ while True:
 
     read_sockets, _, exception_sockets = select.select(sockets_list, [], sockets_list, 0.1)
     for notified_socket in read_sockets:
-        # read_thread = threading.Thread(target=read_handler, args=(notified_socket,))
-        # read_thread.start()
         read_handler(notified_socket)
