@@ -20,6 +20,7 @@ logging.basicConfig(level=logging.DEBUG)
 class MainWindow(QMainWindow):
     def __init__(self):
         super(MainWindow, self).__init__()
+        self.center()
         try:
             self.user_settings: UserSettings = {"downloads_folder_path": str(RECV_FOLDER_PATH)}
             with USER_SETTINGS_PATH.open(mode="r") as user_settings_file:
@@ -32,6 +33,13 @@ class MainWindow(QMainWindow):
                 f"User Settings not found, starting from scratch. Cause: {e}", exc_info=True
             )
             self.ui = Ui_StartWindow(self)
+
+    def center(self):
+        frameGm = self.frameGeometry()
+        screen = QApplication.desktop().screenNumber(QApplication.desktop().cursor().pos())
+        centerPoint = QApplication.desktop().screenGeometry(screen).center()
+        frameGm.moveCenter(centerPoint)
+        self.move(frameGm.topLeft())
 
 
 if __name__ == "__main__":

@@ -478,7 +478,6 @@ class Ui_DrizzleMainWindow(QWidget):
         for index in range(self.lw_OnlineStatus.count()):
             item = self.lw_OnlineStatus.item(index)
             username = item.data(Qt.UserRole)  # type: ignore
-            logging.debug(username)
             if username in users_to_remove:
                 item.setIcon(self.icon_Offline)
                 timestamp = time.localtime(uname_to_status[username])
@@ -564,6 +563,13 @@ class Ui_DrizzleMainWindow(QWidget):
                 )
                 error_dialog.exec()
 
+    # def center(self):
+    #     frameGm = self.frameGeometry()
+    #     screen = QApplication.desktop().screenNumber(QApplication.desktop().cursor().pos())
+    #     centerPoint = QApplication.desktop().screenGeometry(screen).center()
+    #     frameGm.moveCenter(centerPoint)
+    #     self.move(frameGm.topLeft())
+
     def setupUi(self, MainWindow):
         if not MainWindow.objectName():
             MainWindow.setObjectName("MainWindow")
@@ -628,19 +634,6 @@ class Ui_DrizzleMainWindow(QWidget):
         self.Files.addWidget(self.label)
 
         self.file_tree = QTreeWidget(self.centralwidget)
-        # QTreeWidgetItem(self.file_tree)
-        # __qtreewidgetitem = QTreeWidgetItem(self.file_tree)
-        # QTreeWidgetItem(__qtreewidgetitem)
-        # QTreeWidgetItem(__qtreewidgetitem)
-        # QTreeWidgetItem(__qtreewidgetitem)
-        # QTreeWidgetItem(self.file_tree)
-        # __qtreewidgetitem1 = QTreeWidgetItem(self.file_tree)
-        # QTreeWidgetItem(__qtreewidgetitem1)
-        # QTreeWidgetItem(__qtreewidgetitem1)
-        # QTreeWidgetItem(__qtreewidgetitem1)
-        # QTreeWidgetItem(__qtreewidgetitem1)
-        # QTreeWidgetItem(self.file_tree)
-        # self.file_tree.setObjectName("treeWidget")
         self.file_tree.header().setVisible(True)
         self.file_tree.headerItem().setText(0, "No user selected")
 
@@ -939,6 +932,7 @@ class Ui_DrizzleMainWindow(QWidget):
         MainWindow.setCentralWidget(self.centralwidget)
 
         self.retranslateUi(MainWindow)
+        # self.center()
 
         QMetaObject.connectSlotsByName(MainWindow)
 
@@ -955,7 +949,7 @@ class Ui_DrizzleMainWindow(QWidget):
         self.btn_Settings.setText(QCoreApplication.translate("MainWindow", "Settings", None))
         self.label.setText(QCoreApplication.translate("MainWindow", "Browse Files", None))
 
-        self.btn_Settings.clicked.connect(self.open_settings)
+        self.btn_Settings.clicked.connect(lambda: self.open_settings(MainWindow))
 
         __sortingEnabled = self.file_tree.isSortingEnabled()
         self.file_tree.setSortingEnabled(__sortingEnabled)
@@ -985,7 +979,7 @@ class Ui_DrizzleMainWindow(QWidget):
         self.label_6.setText(QCoreApplication.translate("MainWindow", "TextLabel", None))
         self.label_11.setText(QCoreApplication.translate("MainWindow", "TextLabel", None))
 
-    def open_settings(self):
-        settings_dialog = QDialog()
+    def open_settings(self, MainWindow):
+        settings_dialog = QDialog(MainWindow)
         settings_dialog.ui = Ui_SettingsDialog(settings_dialog, self.user_settings)
         settings_dialog.exec()

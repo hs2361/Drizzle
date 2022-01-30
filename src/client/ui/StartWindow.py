@@ -62,7 +62,7 @@ class Ui_StartWindow(QWidget):
         MainWindow.setCentralWidget(self.centralwidget)
 
         self.retranslateUi(MainWindow)
-
+        # self.center()
         QMetaObject.connectSlotsByName(MainWindow)
 
     # setupUi

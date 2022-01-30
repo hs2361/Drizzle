@@ -1,6 +1,7 @@
 import json
 import logging
 import sys
+from pathlib import Path
 
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
@@ -53,16 +54,17 @@ class Ui_BasicConfigWindow(QWidget):
 
         self.horizontalLayout.addWidget(self.le_sharePath)
 
-        self.pushButton = QPushButton(self.centralwidget)
-        self.pushButton.setObjectName("pushButton")
+        self.btn_SelectSharePath = QPushButton(self.centralwidget)
+        self.btn_SelectSharePath.setObjectName("pushButton")
+        self.btn_SelectSharePath.clicked.connect(self.open_dir_picker)
 
-        self.horizontalLayout.addWidget(self.pushButton)
+        self.horizontalLayout.addWidget(self.btn_SelectSharePath)
 
         self.verticalLayout.addLayout(self.horizontalLayout)
 
         self.btn_submit = QPushButton(self.centralwidget)
         self.btn_submit.setObjectName("pushButton_2")
-        self.btn_submit.clicked.connect(lambda: self.onSubmit(MainWindow))
+        self.btn_submit.clicked.connect(lambda: self.on_submit(MainWindow))
 
         self.verticalLayout.addWidget(self.btn_submit)
 
@@ -94,14 +96,16 @@ class Ui_BasicConfigWindow(QWidget):
         self.le_sharePath.setPlaceholderText(
             QCoreApplication.translate("InitialSettingsWindow", "Enter Share Folder Path", None)
         )
-        self.pushButton.setText(QCoreApplication.translate("InitialSettingsWindow", "Open", None))
+        self.btn_SelectSharePath.setText(
+            QCoreApplication.translate("InitialSettingsWindow", "Open", None)
+        )
         self.btn_submit.setText(
             QCoreApplication.translate("InitialSettingsWindow", "Continue", None)
         )
 
     # retranslateUi
 
-    def onSubmit(self, MainWindow):
+    def on_submit(self, MainWindow):
         MainWindow.user_settings["server_ip"] = self.le_serverIp.text()
         MainWindow.user_settings["share_folder_path"] = self.le_sharePath.text()
         try:
@@ -113,3 +117,9 @@ class Ui_BasicConfigWindow(QWidget):
         except Exception as e:
             logging.error(f"Could not save User Config: {e}")
             self.close()
+
+    def open_dir_picker(self):
+        path = QFileDialog.getExistingDirectory(
+            self, "Select Share Folder", str(Path.home()), QFileDialog.ShowDirsOnly
+        )
+        self.le_sharePath.setText(path)

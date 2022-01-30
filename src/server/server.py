@@ -67,7 +67,6 @@ def receive_msg(client_socket: socket.socket) -> Message:
             code=ExceptionCode.INVALID_HEADER,
         )
     elif message_type == HeaderCode.HEARTBEAT_REQUEST.value:
-        logging.debug(f"Heartbeat from {client_socket.getpeername()}")
         return {"type": HeaderCode(message_type), "query": "online"}
     else:
         message_len = int(client_socket.recv(HEADER_MSG_LEN).decode(FMT))

@@ -1,5 +1,7 @@
 import json
+import os
 import sys
+from pathlib import Path
 
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
@@ -42,6 +44,7 @@ class Ui_SettingsDialog(QDialog):
 
         self.btn_SelectShare = QPushButton(Dialog)
         self.btn_SelectShare.setObjectName("pushButton")
+        self.btn_SelectShare.clicked.connect(lambda: self.open_dir_picker(True))
 
         self.horizontalLayout.addWidget(self.btn_SelectShare)
 
@@ -55,13 +58,14 @@ class Ui_SettingsDialog(QDialog):
 
         self.horizontalLayout_2 = QHBoxLayout()
         self.horizontalLayout_2.setObjectName("horizontalLayout_2")
-        self.le_DownloadPath = QLineEdit(Dialog)
-        self.le_DownloadPath.setObjectName("lineEdit_2")
+        self.le_DownloadsPath = QLineEdit(Dialog)
+        self.le_DownloadsPath.setObjectName("lineEdit_2")
 
-        self.horizontalLayout_2.addWidget(self.le_DownloadPath)
+        self.horizontalLayout_2.addWidget(self.le_DownloadsPath)
 
         self.btn_SelectDownload = QPushButton(Dialog)
         self.btn_SelectDownload.setObjectName("pushButton_2")
+        self.btn_SelectDownload.clicked.connect(lambda: self.open_dir_picker(False))
 
         self.horizontalLayout_2.addWidget(self.btn_SelectDownload)
 
@@ -125,7 +129,7 @@ class Ui_SettingsDialog(QDialog):
         )
         self.btn_SelectShare.setText(QCoreApplication.translate("Dialog", "Select", None))
         self.label_2.setText(QCoreApplication.translate("Dialog", "Downloads Folder Path", None))
-        self.le_DownloadPath.setText(
+        self.le_DownloadsPath.setText(
             QCoreApplication.translate("Dialog", self.settings["downloads_folder_path"], None)
         )
         self.btn_SelectDownload.setText(QCoreApplication.translate("Dialog", "Select", None))
@@ -143,11 +147,34 @@ class Ui_SettingsDialog(QDialog):
 
     # retranslateUi
     def apply_settings(self, Dialog):
-        self.settings["downloads_folder_path"] = self.le_DownloadPath.text()
-        self.settings["share_folder_path"] = self.le_SharePath.text()
-        self.settings["server_ip"] = self.le_ServerIP.text()
-        self.settings["uname"] = self.le_Username.text()
+        new_settings: UserSettings = {}
+        new_settings["downloads_folder_path"] = self.le_DownloadsPath.text()
+        new_settings["share_folder_path"] = self.le_SharePath.text()
+        new_settings["server_ip"] = self.le_ServerIP.text()
+        new_settings["uname"] = self.le_Username.text()
 
         with USER_SETTINGS_PATH.open(mode="w") as user_settings_file:
-            json.dump(self.settings, user_settings_file)
+            json.dump(new_settings, user_settings_file)
+
+        if new_settings != self.settings:
+            message_box = QMessageBox(Dialog)
+            message_box.setIcon(QMessageBox.Information)
+            message_box.setWindowTitle("Settings Changed")
+            message_box.setText("New settings will be applied after restart")
+            message_box.addButton(QMessageBox.Close)
+            btn_restart = message_box.addButton("Restart Now", QMessageBox.NoRole)
+            btn_restart.clicked.connect(lambda: os.execl(sys.executable, sys.executable, *sys.argv))
+            message_box.exec()
+
+        self.settings = new_settings
         Dialog.close()
+
+    def open_dir_picker(self, is_share_path: bool):
+        title = "Select Share Folder" if is_share_path else "Select Downloads Folder"
+        path = QFileDialog.getExistingDirectory(
+            self, title, str(Path.home()), QFileDialog.ShowDirsOnly
+        )
+        if is_share_path:
+            self.le_SharePath.setText(path)
+        else:
+            self.le_DownloadsPath.setText(path)
