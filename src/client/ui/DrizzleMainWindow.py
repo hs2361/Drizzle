@@ -10,6 +10,8 @@ import msgpack
 from PyQt5.QtCore import *
 from PyQt5.QtGui import QFont, QIcon
 from PyQt5.QtWidgets import *
+from ui.ErrorDialog import Ui_ErrorDialog
+from ui.SettingsDialog import Ui_SettingsDialog
 
 sys.path.append("../")
 from utils.constants import (
@@ -38,6 +40,7 @@ from utils.types import (
     HeaderCode,
     Message,
     UpdateHashParams,
+    UserSettings,
 )
 
 SERVER_IP = ""
@@ -67,6 +70,10 @@ self_uname: str = ""
 class HeartbeatWorker(QObject):
     update_status = pyqtSignal(dict)
 
+    def __init__(self, settings: UserSettings):
+        super(HeartbeatWorker, self).__init__()
+        self.settings = settings
+
     def run(self):
         global client_send_socket
         heartbeat = HeaderCode.HEARTBEAT_REQUEST.value.encode(FMT)
@@ -80,10 +87,14 @@ class HeartbeatWorker(QObject):
                 new_status = msgpack.unpackb(client_send_socket.recv(length))
                 self.update_status.emit(new_status)
             else:
-                raise RequestException(
+                logging.error(
                     f"Server sent invalid message type in header: {type}",
-                    ExceptionCode.INVALID_HEADER,
                 )
+                error_dialog = QDialog()
+                error_dialog.ui = Ui_ErrorDialog(
+                    error_dialog, f"Cannot establish connection with server", self.settings
+                )
+                sys.exit(error_dialog.exec())
 
 
 class ReceiveWorker(QObject):
@@ -317,10 +328,11 @@ class Ui_DrizzleMainWindow(QWidget):
     def __init__(self, MainWindow):
         super(Ui_DrizzleMainWindow, self).__init__()
         try:
-            SERVER_IP = MainWindow.user_settings["server_ip"]
+            self.user_settings = MainWindow.user_settings
+            SERVER_IP = self.user_settings["server_ip"]
             SERVER_ADDR = (SERVER_IP, SERVER_RECV_PORT)
             client_send_socket.connect(SERVER_ADDR)
-            self_uname = MainWindow.user_settings["uname"]
+            self_uname = self.user_settings["uname"]
             username = self_uname.encode(FMT)
             username_header = (
                 f"{HeaderCode.NEW_CONNECTION.value}{len(username):<{HEADER_MSG_LEN}}".encode(FMT)
@@ -336,6 +348,14 @@ class Ui_DrizzleMainWindow(QWidget):
                 if exception.code == ExceptionCode.USER_EXISTS:
                     logging.error(msg=exception.msg)
                     print("\nSorry that username is taken, please choose another one")
+                    error_dialog = QDialog()
+                    error_dialog.ui = Ui_ErrorDialog(
+                        error_dialog,
+                        "Sorry that username is taken, please choose another one",
+                        self.user_settings,
+                    )
+                    error_dialog.exec()
+
                 else:
                     logging.fatal(msg=exception.msg)
                     print("\nSorry something went wrong")
@@ -343,7 +363,7 @@ class Ui_DrizzleMainWindow(QWidget):
                     client_recv_socket.close()
                     MainWindow.close()
             share_data = msgpack.packb(
-                path_to_dict(Path(MainWindow.user_settings["share_folder_path"]))["children"]
+                path_to_dict(Path(self.user_settings["share_folder_path"]))["children"]
             )
             share_data_header = (
                 f"{HeaderCode.SHARE_DATA.value}{len(share_data):<{HEADER_MSG_LEN}}".encode(FMT)
@@ -351,7 +371,7 @@ class Ui_DrizzleMainWindow(QWidget):
             client_send_socket.sendall(share_data_header + share_data)
 
             self.heartbeat_thread = QThread()
-            self.heartbeat_worker = HeartbeatWorker()
+            self.heartbeat_worker = HeartbeatWorker(self.user_settings)
             self.heartbeat_worker.moveToThread(self.heartbeat_thread)
             self.heartbeat_thread.started.connect(self.heartbeat_worker.run)
             self.heartbeat_worker.update_status.connect(self.update_online_status)
@@ -366,6 +386,14 @@ class Ui_DrizzleMainWindow(QWidget):
 
         except Exception as e:
             logging.error(f"Could not connect to server: {e}")
+            error_dialog = QDialog()
+            error_dialog.ui = Ui_ErrorDialog(
+                error_dialog,
+                f"Could not connect to server: {e}\nEnsure that the server is online and you have entered the correct server IP.",
+                self.user_settings,
+            )
+            sys.exit(error_dialog.exec())
+
         self.setupUi(MainWindow)
 
     def send_message(self):
@@ -374,6 +402,8 @@ class Ui_DrizzleMainWindow(QWidget):
         global messages_store
         global selected_uname
 
+        if self.txtedit_MessageInput.toPlainText() == "":
+            return
         peer_ip = request_ip(selected_uname, client_send_socket)
         client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client_peer_socket.connect((peer_ip, CLIENT_RECV_PORT))
@@ -383,7 +413,10 @@ class Ui_DrizzleMainWindow(QWidget):
             header = f"{HeaderCode.MESSAGE.value}{len(msg_bytes):<{HEADER_MSG_LEN}}".encode(FMT)
             try:
                 client_peer_socket.send(header + msg_bytes)
-                messages_store[selected_uname].append({"sender": self_uname, "content": msg})
+                if messages_store.get(selected_uname) is not None:
+                    messages_store[selected_uname].append({"sender": self_uname, "content": msg})
+                else:
+                    messages_store[selected_uname] = [{"sender": self_uname, "content": msg}]
                 self.render_messages(messages_store[selected_uname])
             except Exception as e:
                 logging.error(f"Failed to send message: {e}")
@@ -409,11 +442,10 @@ class Ui_DrizzleMainWindow(QWidget):
                 self.render_file_tree(item["children"], dir_item)
 
     def construct_message_html(self, message: Message, is_self: bool):
-        return f"""
-                    <p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">
-                        <span style=" font-weight:600; color:{'#1a5fb4' if is_self else '#e5a50a'};"> {"You" if is_self else message["sender"]}: </span>
-                        {message["content"]}
-                    </p>
+        return f"""<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">
+<span style=" font-weight:600; color:{'#1a5fb4' if is_self else '#e5a50a'};">{"You" if is_self else message["sender"]}: </span>
+{message["content"]}
+</p>
         """
 
     def messages_controller(self, message: Message):
@@ -424,11 +456,17 @@ class Ui_DrizzleMainWindow(QWidget):
 
     def render_messages(self, messages_list: list[Message]):
         global self_uname
+        if messages_list is None or messages_list == []:
+            self.txtedit_MessagesArea.clear()
+            return
         messages_html = LEADING_HTML
         for message in messages_list:
             messages_html += self.construct_message_html(message, message["sender"] == self_uname)
         messages_html += TRAILING_HTML
         self.txtedit_MessagesArea.setHtml(messages_html)
+        self.txtedit_MessagesArea.verticalScrollBar().setValue(
+            self.txtedit_MessagesArea.verticalScrollBar().maximum()
+        )
 
     def update_online_status(self, new_status: dict[str, int]):
         global uname_to_status
@@ -486,6 +524,13 @@ class Ui_DrizzleMainWindow(QWidget):
             item = items[0]
             username: str = item.data(Qt.UserRole)
             selected_uname = username
+            self.render_messages(messages_store.get(selected_uname))
+            self.btn_SendMessage.setEnabled(
+                True if time.time() - uname_to_status[username] < ONLINE_TIMEOUT else False
+            )
+            self.btn_SendFile.setEnabled(
+                True if time.time() - uname_to_status[username] < ONLINE_TIMEOUT else False
+            )
             if time.time() - uname_to_status[username] > ONLINE_TIMEOUT:
                 self.file_tree.clear()
                 self.file_tree.headerItem().setText(0, "Selected user is offline")
@@ -510,7 +555,14 @@ class Ui_DrizzleMainWindow(QWidget):
                 else:
                     print("No files found")
             else:
-                logging.error("Error occured while searching for files")
+                logging.error(f"Error occured while searching for files, {response_header_type}")
+                error_dialog = QDialog()
+                error_dialog.ui = Ui_ErrorDialog(
+                    error_dialog,
+                    f"Error occured while searching for files, {response_header_type}",
+                    self.user_settings,
+                )
+                error_dialog.exec()
 
     def setupUi(self, MainWindow):
         if not MainWindow.objectName():
@@ -559,10 +611,10 @@ class Ui_DrizzleMainWindow(QWidget):
 
         self.Buttons.addWidget(self.pushButton_2)
 
-        self.pushButton = QPushButton(self.centralwidget)
-        self.pushButton.setObjectName("pushButton")
+        self.btn_Settings = QPushButton(self.centralwidget)
+        self.btn_Settings.setObjectName("pushButton")
 
-        self.Buttons.addWidget(self.pushButton)
+        self.Buttons.addWidget(self.btn_Settings)
 
         self.verticalLayout.addLayout(self.Buttons)
 
@@ -677,6 +729,7 @@ class Ui_DrizzleMainWindow(QWidget):
         self.verticalLayout_6.setObjectName("verticalLayout_6")
         self.btn_SendMessage = QPushButton(self.centralwidget)
         self.btn_SendMessage.setObjectName("pushButton_3")
+        self.btn_SendMessage.setEnabled(False)
         sizePolicy4 = QSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
         sizePolicy4.setHorizontalStretch(0)
         sizePolicy4.setVerticalStretch(0)
@@ -690,6 +743,7 @@ class Ui_DrizzleMainWindow(QWidget):
         self.btn_SendFile.setObjectName("pushButton_6")
         sizePolicy4.setHeightForWidth(self.btn_SendFile.sizePolicy().hasHeightForWidth())
         self.btn_SendFile.setSizePolicy(sizePolicy4)
+        self.btn_SendFile.setEnabled(False)
 
         self.verticalLayout_6.addWidget(self.btn_SendFile)
 
@@ -894,57 +948,16 @@ class Ui_DrizzleMainWindow(QWidget):
         MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", "Drizzle", None))
         self.label_3.setText(
             QCoreApplication.translate(
-                "MainWindow", f"Drizzle / {MainWindow.user_settings['uname']}", None
+                "MainWindow", f"Drizzle / {self.user_settings['uname']}", None
             )
         )
         self.pushButton_2.setText(QCoreApplication.translate("MainWindow", "Add Files", None))
-        self.pushButton.setText(QCoreApplication.translate("MainWindow", "Settings", None))
+        self.btn_Settings.setText(QCoreApplication.translate("MainWindow", "Settings", None))
         self.label.setText(QCoreApplication.translate("MainWindow", "Browse Files", None))
-        # ___qtreewidgetitem = self.file_tree.headerItem()
-        # ___qtreewidgetitem.setText(
-        #     0, QCoreApplication.translate("MainWindow", "RichardRoe12", None)
-        # )
+
+        self.btn_Settings.clicked.connect(self.open_settings)
 
         __sortingEnabled = self.file_tree.isSortingEnabled()
-        # self.file_tree.setSortingEnabled(False)
-        # ___qtreewidgetitem1 = self.file_tree.topLevelItem(0)
-        # ___qtreewidgetitem1.setText(
-        #     0, QCoreApplication.translate("MainWindow", "photoshop.iso", None)
-        # )
-        # ___qtreewidgetitem2 = self.file_tree.topLevelItem(1)
-        # ___qtreewidgetitem2.setText(0, QCoreApplication.translate("MainWindow", "Movies/", None))
-        # ___qtreewidgetitem3 = ___qtreewidgetitem2.child(0)
-        # ___qtreewidgetitem3.setText(
-        #     0, QCoreApplication.translate("MainWindow", "The Matrix.mov", None)
-        # )
-        # ___qtreewidgetitem4 = ___qtreewidgetitem2.child(1)
-        # ___qtreewidgetitem4.setText(
-        #     0, QCoreApplication.translate("MainWindow", "Forrest Gump.mp4", None)
-        # )
-        # ___qtreewidgetitem5 = ___qtreewidgetitem2.child(2)
-        # ___qtreewidgetitem5.setText(0, QCoreApplication.translate("MainWindow", "Django.mp4", None))
-        # ___qtreewidgetitem6 = self.file_tree.topLevelItem(2)
-        # ___qtreewidgetitem6.setText(
-        #     0, QCoreApplication.translate("MainWindow", "msoffice.zip", None)
-        # )
-        # ___qtreewidgetitem7 = self.file_tree.topLevelItem(3)
-        # ___qtreewidgetitem7.setText(0, QCoreApplication.translate("MainWindow", "Games/", None))
-        # ___qtreewidgetitem8 = ___qtreewidgetitem7.child(0)
-        # ___qtreewidgetitem8.setText(0, QCoreApplication.translate("MainWindow", "NFS/", None))
-        # ___qtreewidgetitem9 = ___qtreewidgetitem7.child(1)
-        # ___qtreewidgetitem9.setText(
-        #     0, QCoreApplication.translate("MainWindow", "nfsmostwanted.zip", None)
-        # )
-        # ___qtreewidgetitem10 = ___qtreewidgetitem7.child(2)
-        # ___qtreewidgetitem10.setText(
-        #     0, QCoreApplication.translate("MainWindow", "TLauncher.zip", None)
-        # )
-        # ___qtreewidgetitem11 = ___qtreewidgetitem7.child(3)
-        # ___qtreewidgetitem11.setText(0, QCoreApplication.translate("MainWindow", "GTA-V.iso", None))
-        # ___qtreewidgetitem12 = self.file_tree.topLevelItem(4)
-        # ___qtreewidgetitem12.setText(
-        #     0, QCoreApplication.translate("MainWindow", "Study Material/", None)
-        # )
         self.file_tree.setSortingEnabled(__sortingEnabled)
 
         self.label_4.setText(
@@ -956,35 +969,8 @@ class Ui_DrizzleMainWindow(QWidget):
 
         __sortingEnabled1 = self.lw_OnlineStatus.isSortingEnabled()
         self.lw_OnlineStatus.setSortingEnabled(False)
-        # ___qlistwidgetitem = self.lw_OnlineStatus.item(0)
-        # ___qlistwidgetitem.setText(QCoreApplication.translate("MainWindow", "RichardRoe12", None))
-        # ___qlistwidgetitem1 = self.lw_OnlineStatus.item(1)
-        # ___qlistwidgetitem1.setText(QCoreApplication.translate("MainWindow", "ronaldw", None))
-        # ___qlistwidgetitem2 = self.lw_OnlineStatus.item(2)
-        # ___qlistwidgetitem2.setText(
-        #     QCoreApplication.translate("MainWindow", "harrypotter (last active: 11:45 am)", None)
-        # )
-        # ___qlistwidgetitem3 = self.lw_OnlineStatus.item(3)
-        # ___qlistwidgetitem3.setText(QCoreApplication.translate("MainWindow", "anonymous_lol", None))
         self.lw_OnlineStatus.setSortingEnabled(__sortingEnabled1)
 
-        # self.txtedit_MessagesArea.setHtml(
-        #     QCoreApplication.translate(
-        #         "MainWindow",
-        #         '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0//EN" "http://www.w3.org/TR/REC-html40/strict.dtd">\n'
-        #         '<html><head><meta name="qrichtext" content="1" /><style type="text/css">\n'
-        #         "p, li { white-space: pre-wrap; }\n"
-        #         "</style></head><body style=\" font-family:'Noto Sans'; font-size:10pt; font-weight:400; font-style:normal;\">\n"
-        #         '<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"><span style=" font-weight:600; color:#e5a50a;">12:03</span><span style=" font-weight:600;"> RichardRoe12: </span>Hello</p>\n'
-        #         '<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"><span style=" font-weight:600; color:#1a5fb4;">12:03</span><span style=" font-weight:600;"> You: </span>Hii</p>\n'
-        #         '<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"><span style=" font-weight:600; color:#e5a50a;">12:03</span><span style="'
-        #         ' font-weight:600;"> RichardRoe12: </span>Got any games?</p>\n'
-        #         '<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"><span style=" font-weight:600; color:#1a5fb4;">12:03</span><span style=" font-weight:600;"> You: </span>Probably</p>\n'
-        #         '<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;"><span style=" font-weight:600; color:#1a5fb4;">12:03</span><span style=" font-weight:600;"> You: </span>Wait ill upload something...</p>',
-        #         "</body></html>",
-        #         # None,
-        #     )
-        # )
         self.txtedit_MessageInput.setPlaceholderText(
             QCoreApplication.translate("MainWindow", "Enter message", None)
         )
@@ -999,4 +985,7 @@ class Ui_DrizzleMainWindow(QWidget):
         self.label_6.setText(QCoreApplication.translate("MainWindow", "TextLabel", None))
         self.label_11.setText(QCoreApplication.translate("MainWindow", "TextLabel", None))
 
-    # retranslateUi
+    def open_settings(self):
+        settings_dialog = QDialog()
+        settings_dialog.ui = Ui_SettingsDialog(settings_dialog, self.user_settings)
+        settings_dialog.exec()
