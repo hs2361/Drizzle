@@ -1,10 +1,12 @@
 import logging
 import socket
+from pathlib import Path
 
 import msgpack
 
 from utils.constants import FMT, HEADER_MSG_LEN, HEADER_TYPE_LEN
 from utils.exceptions import RequestException
+from utils.helpers import path_to_dict
 from utils.types import HeaderCode
 
 
@@ -58,6 +60,12 @@ def recvall(peer_socket: socket.socket, length: int) -> bytes:
             break
         data += new_data
         received += len(new_data)
-    # if received != length:
-    #     raise RequestException(msg="Data received is incomplete", code=ExceptionCode.INCOMPLETE)
     return data
+
+
+def update_share_data(share_folder_path: Path, client_send_socket: socket.socket):
+    share_data = msgpack.packb(path_to_dict(share_folder_path)["children"])
+    share_data_header = f"{HeaderCode.SHARE_DATA.value}{len(share_data):<{HEADER_MSG_LEN}}".encode(
+        FMT
+    )
+    client_send_socket.sendall(share_data_header + share_data)

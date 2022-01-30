@@ -30,8 +30,8 @@ from utils.constants import (
     TRAILING_HTML,
 )
 from utils.exceptions import ExceptionCode, RequestException
-from utils.helpers import get_file_hash, get_unique_filename, path_to_dict
-from utils.socket_functions import get_ip, recvall, request_ip
+from utils.helpers import get_file_hash, get_unique_filename, import_share_file, path_to_dict
+from utils.socket_functions import get_ip, recvall, request_ip, update_share_data
 from utils.types import (
     DBData,
     DirData,
@@ -362,13 +362,7 @@ class Ui_DrizzleMainWindow(QWidget):
                     client_send_socket.close()
                     client_recv_socket.close()
                     MainWindow.close()
-            share_data = msgpack.packb(
-                path_to_dict(Path(self.user_settings["share_folder_path"]))["children"]
-            )
-            share_data_header = (
-                f"{HeaderCode.SHARE_DATA.value}{len(share_data):<{HEADER_MSG_LEN}}".encode(FMT)
-            )
-            client_send_socket.sendall(share_data_header + share_data)
+            update_share_data(Path(self.user_settings["share_folder_path"]), client_send_socket)
 
             self.heartbeat_thread = QThread()
             self.heartbeat_worker = HeartbeatWorker(self.user_settings)
@@ -612,10 +606,16 @@ class Ui_DrizzleMainWindow(QWidget):
 
         self.Buttons.addItem(self.horizontalSpacer)
 
-        self.pushButton_2 = QPushButton(self.centralwidget)
-        self.pushButton_2.setObjectName("pushButton_2")
+        self.btn_AddFiles = QPushButton(self.centralwidget)
+        self.btn_AddFiles.setObjectName("pushButton_2")
+        self.btn_AddFiles.clicked.connect(self.import_files)
 
-        self.Buttons.addWidget(self.pushButton_2)
+        self.btn_AddFolder = QPushButton(self.centralwidget)
+        self.btn_AddFolder.setObjectName("pushButton_2")
+        self.btn_AddFolder.clicked.connect(self.import_folder)
+
+        self.Buttons.addWidget(self.btn_AddFiles)
+        self.Buttons.addWidget(self.btn_AddFolder)
 
         self.btn_Settings = QPushButton(self.centralwidget)
         self.btn_Settings.setObjectName("pushButton")
@@ -945,7 +945,8 @@ class Ui_DrizzleMainWindow(QWidget):
                 "MainWindow", f"Drizzle / {self.user_settings['uname']}", None
             )
         )
-        self.pushButton_2.setText(QCoreApplication.translate("MainWindow", "Add Files", None))
+        self.btn_AddFiles.setText(QCoreApplication.translate("MainWindow", "Add Files", None))
+        self.btn_AddFolder.setText(QCoreApplication.translate("MainWindow", "Add Folder", None))
         self.btn_Settings.setText(QCoreApplication.translate("MainWindow", "Settings", None))
         self.label.setText(QCoreApplication.translate("MainWindow", "Browse Files", None))
 
@@ -983,3 +984,22 @@ class Ui_DrizzleMainWindow(QWidget):
         settings_dialog = QDialog(MainWindow)
         settings_dialog.ui = Ui_SettingsDialog(settings_dialog, self.user_settings)
         settings_dialog.exec()
+
+    def import_files(self):
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Import Files", str(Path.home()), "All Files (*)"
+        )
+        for file in files:
+            imported = import_share_file(Path(file), Path(self.user_settings["share_folder_path"]))
+            if imported is not None:
+                print(f"Imported file {imported}")
+        update_share_data(Path(self.user_settings["share_folder_path"]), client_send_socket)
+
+    def import_folder(self):
+        dir = QFileDialog.getExistingDirectory(
+            self, "Import Folder", str(Path.home()), QFileDialog.ShowDirsOnly
+        )
+        imported = import_share_file(Path(dir), Path(self.user_settings["share_folder_path"]))
+        if imported is not None:
+            print(f"Imported file {imported}")
+        update_share_data(Path(self.user_settings["share_folder_path"]), client_send_socket)

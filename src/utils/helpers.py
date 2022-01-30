@@ -148,3 +148,13 @@ def get_pending_downloads(transfer_progress: dict[Path, TransferProgress]) -> st
             in [TransferStatus.DOWNLOADING, TransferStatus.PAUSED, TransferStatus.NEVER_STARTED]
         ]
     )
+
+
+def import_share_file(file_path: Path, share_folder_path: Path) -> Path | None:
+    if file_path.exists():
+        imported_file = share_folder_path / file_path.name
+        imported_file.symlink_to(file_path, target_is_directory=file_path.is_dir())
+        return imported_file
+    else:
+        logging.error(f"Attempted to import file {str(file_path)} that does not exist")
+        return None
