@@ -109,6 +109,7 @@ class HeartbeatWorker(QObject):
 
 class ReceiveHandler(QObject):
     message_received = pyqtSignal(dict)
+    file_received = pyqtSignal(dict)
 
     def send_file(
         self,
@@ -212,7 +213,7 @@ class ReceiveHandler(QObject):
                                 byte_count += len(file_bytes_read)
                                 file_to_write.write(file_bytes_read)
                             file_to_write.close()
-                            return "Succesfully received 1 file"
+                            return f"Received file {write_path.name}"
                         except Exception as e:
                             logging.error(e)
                             return "File received but failed to save"
@@ -311,8 +312,8 @@ class ReceiveHandler(QObject):
                         break
                 else:
                     try:
-                        message_content: str = self.receive_msg(notified_socket)
                         username = peers[notified_socket.getpeername()[0]]
+                        message_content: str = self.receive_msg(notified_socket)
                         message: Message = {"sender": username, "content": message_content}
                         if messages_store.get(username) is not None:
                             messages_store[username].append(message)
@@ -331,11 +332,56 @@ class ReceiveHandler(QObject):
 
 
 class SendFileWorker(QObject):
-    def __init__(self):
+    sending_file = pyqtSignal(dict)
+
+    def __init__(self, filepath: Path):
         super().__init__()
+        self.filepath = filepath
+        peer_ip = request_ip(selected_uname, client_send_socket)
+        if peer_ip is not None:
+            self.client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.client_peer_socket.connect((peer_ip, CLIENT_RECV_PORT))
 
     def run(self):
-        pass
+        global self_uname
+        if self.filepath and self.filepath.is_file():
+            # self.filepath: Path = SHARE_FOLDER_PATH / self.filepath
+            logging.debug(f"{self.filepath} chosen to send")
+            filemetadata: FileMetadata = {
+                "path": self.filepath.name,
+                "size": self.filepath.stat().st_size,
+            }
+            logging.debug(filemetadata)
+            filemetadata_bytes = msgpack.packb(filemetadata)
+            logging.debug(filemetadata_bytes)
+            filesend_header = (
+                f"{HeaderCode.FILE.value}{len(filemetadata_bytes):<{HEADER_MSG_LEN}}".encode(FMT)
+            )
+            try:
+                file_to_send = self.filepath.open(mode="rb")
+                logging.debug(f"Sending file {self.filepath} to {selected_uname}")
+                self.client_peer_socket.send(filesend_header + filemetadata_bytes)
+                total_bytes_read = 0
+                msg = f"Sending file {str(self.filepath)}"
+                if messages_store.get(selected_uname) is not None:
+                    messages_store[selected_uname].append({"sender": self_uname, "content": msg})
+                else:
+                    messages_store[selected_uname] = [{"sender": self_uname, "content": msg}]
+                self.sending_file.emit({"sender": self_uname, "content": msg})
+                while total_bytes_read != filemetadata["size"]:
+                    bytes_read = file_to_send.read(FILE_BUFFER_LEN)
+                    self.client_peer_socket.sendall(bytes_read)
+                    num_bytes = len(bytes_read)
+                    total_bytes_read += num_bytes
+                print("\nFile Sent")
+                file_to_send.close()
+            except Exception as e:
+                logging.error(f"File Sending failed: {e}")
+        else:
+            logging.error(f"{self.filepath} not found")
+            print(
+                f"\nUnable to perform send request, ensure that the file is available in {SHARE_FOLDER_PATH}"
+            )
 
 
 class Ui_DrizzleMainWindow(QWidget):
@@ -779,6 +825,7 @@ class Ui_DrizzleMainWindow(QWidget):
         sizePolicy4.setHeightForWidth(self.btn_SendFile.sizePolicy().hasHeightForWidth())
         self.btn_SendFile.setSizePolicy(sizePolicy4)
         self.btn_SendFile.setEnabled(False)
+        self.btn_SendFile.clicked.connect(self.share_file)
 
         self.verticalLayout_6.addWidget(self.btn_SendFile)
 
@@ -1067,3 +1114,16 @@ class Ui_DrizzleMainWindow(QWidget):
         if imported is not None:
             print(f"Imported file {imported}")
         update_share_data(Path(self.user_settings["share_folder_path"]), client_send_socket)
+
+    def share_file(self):
+        filepath, _ = QFileDialog.getOpenFileName(
+            self, "Import Files", str(Path.home()), "All Files (*)"
+        )
+        if filepath == "":
+            return
+        self.send_file_thread = QThread()
+        self.send_file_worker = SendFileWorker(Path(filepath))
+        self.send_file_worker.moveToThread(self.send_file_thread)
+        self.send_file_thread.started.connect(self.send_file_worker.run)
+        self.send_file_worker.sending_file.connect(self.messages_controller)
+        self.send_file_thread.start()
