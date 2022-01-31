@@ -13,7 +13,12 @@ from PyQt5.QtGui import *
 from PyQt5.QtWidgets import *
 
 
-class Ui_FileInfoDialog(object):
+class Ui_FileInfoDialog(QDialog):
+    def __init__(self, Dialog, filedata):
+        super(Ui_FileInfoDialog, self).__init__()
+        self.filedata = filedata
+        self.setupUi(Dialog)
+
     def setupUi(self, Dialog):
         if not Dialog.objectName():
             Dialog.setObjectName("Dialog")
@@ -40,7 +45,7 @@ class Ui_FileInfoDialog(object):
         self.formLayout.setRowWrapPolicy(QFormLayout.DontWrapRows)
         self.label_2 = QLabel(Dialog)
         self.label_2.setObjectName("label_2")
-        self.label_2.setMargin(10)
+        self.label_2.setMargin(5)
 
         self.formLayout.setWidget(0, QFormLayout.LabelRole, self.label_2)
 
@@ -52,7 +57,7 @@ class Ui_FileInfoDialog(object):
 
         self.label_4 = QLabel(Dialog)
         self.label_4.setObjectName("label_4")
-        self.label_4.setMargin(10)
+        self.label_4.setMargin(5)
 
         self.formLayout.setWidget(1, QFormLayout.LabelRole, self.label_4)
 
@@ -64,7 +69,7 @@ class Ui_FileInfoDialog(object):
 
         self.label_6 = QLabel(Dialog)
         self.label_6.setObjectName("label_6")
-        self.label_6.setMargin(10)
+        self.label_6.setMargin(5)
 
         self.formLayout.setWidget(2, QFormLayout.LabelRole, self.label_6)
 
@@ -82,7 +87,7 @@ class Ui_FileInfoDialog(object):
 
         self.label_7 = QLabel(Dialog)
         self.label_7.setObjectName("label_7")
-        self.label_7.setMargin(10)
+        self.label_7.setMargin(5)
 
         self.formLayout.setWidget(3, QFormLayout.LabelRole, self.label_7)
 
@@ -90,6 +95,20 @@ class Ui_FileInfoDialog(object):
         self.label_8.setObjectName("label_8")
 
         self.formLayout.setWidget(3, QFormLayout.FieldRole, self.label_8)
+
+        if self.filedata["type"] == "directory":
+            self.label_9 = QLabel(Dialog)
+            self.label_9.setObjectName("label_9")
+            self.label_9.setMargin(5)
+            self.label_9.setText("Count")
+
+            self.formLayout.setWidget(4, QFormLayout.LabelRole, self.label_9)
+
+            self.label_10 = QLabel(Dialog)
+            self.label_10.setObjectName("label_10")
+            self.label_10.setText(f"{self.filedata['count']}")
+
+            self.formLayout.setWidget(4, QFormLayout.FieldRole, self.label_10)
 
         self.verticalLayout.addLayout(self.formLayout)
 
@@ -99,10 +118,11 @@ class Ui_FileInfoDialog(object):
 
         self.horizontalLayout.addItem(self.horizontalSpacer)
 
-        self.pushButton_2 = QPushButton(Dialog)
-        self.pushButton_2.setObjectName("pushButton_2")
+        self.btn_Close = QPushButton(Dialog)
+        self.btn_Close.setObjectName("pushButton_2")
+        self.btn_Close.clicked.connect(Dialog.close)
 
-        self.horizontalLayout.addWidget(self.pushButton_2)
+        self.horizontalLayout.addWidget(self.btn_Close)
 
         self.pushButton = QPushButton(Dialog)
         self.pushButton.setObjectName("pushButton")
@@ -124,11 +144,11 @@ class Ui_FileInfoDialog(object):
 
     def retranslateUi(self, Dialog):
         Dialog.setWindowTitle(QCoreApplication.translate("Dialog", "File Info", None))
-        self.label.setText(QCoreApplication.translate("Dialog", "msoffice.zip", None))
+        self.label.setText(QCoreApplication.translate("Dialog", f"{self.filedata['name']}", None))
         self.label_2.setText(QCoreApplication.translate("Dialog", "Type", None))
-        self.label_3.setText(QCoreApplication.translate("Dialog", "File", None))
+        self.label_3.setText(QCoreApplication.translate("Dialog", f"{self.filedata['type']}", None))
         self.label_4.setText(QCoreApplication.translate("Dialog", "Size", None))
-        self.label_5.setText(QCoreApplication.translate("Dialog", "1.8GiB", None))
+        self.label_5.setText(QCoreApplication.translate("Dialog", f"{self.filedata['size']}", None))
         self.label_6.setText(QCoreApplication.translate("Dialog", "File Hash", None))
         self.textBrowser.setHtml(
             QCoreApplication.translate(
@@ -137,15 +157,15 @@ class Ui_FileInfoDialog(object):
                 '<html><head><meta name="qrichtext" content="1" /><style type="text/css">\n'
                 "p, li { white-space: pre-wrap; }\n"
                 "</style></head><body style=\" font-family:'Noto Sans'; font-size:10pt; font-weight:400; font-style:normal;\">\n"
-                '<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">nkshdfjkghskjfdhgkjsghfdjkhhgsjkdfhbjsdhgfjhsdhfjkghsjkhdhfhjkjsgdfjhbsdjhfgjkhsdgdfjhgs</p></body></html>',
+                f'<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">{self.filedata["hash"]}</p></body></html>',
                 None,
             )
         )
         self.label_7.setText(QCoreApplication.translate("Dialog", "Owner", None))
         self.label_8.setText(
-            QCoreApplication.translate("Dialog", "RichardRoe12 @192.168.0.19", None)
+            QCoreApplication.translate("Dialog", f"{self.filedata['owner']}", None)
         )
-        self.pushButton_2.setText(QCoreApplication.translate("Dialog", "Close", None))
+        self.btn_Close.setText(QCoreApplication.translate("Dialog", "Close", None))
         self.pushButton.setText(QCoreApplication.translate("Dialog", "Download", None))
 
     # retranslateUi

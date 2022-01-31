@@ -12,6 +12,7 @@ from PyQt5.QtCore import *
 from PyQt5.QtGui import QFont, QIcon
 from PyQt5.QtWidgets import *
 from ui.ErrorDialog import Ui_ErrorDialog
+from ui.FileInfoDialog import Ui_FileInfoDialog
 from ui.SettingsDialog import Ui_SettingsDialog
 
 sys.path.append("../")
@@ -327,6 +328,14 @@ class ReceiveHandler(QObject):
                                 logging.info("already removed")
                         logging.error(msg=f"Exception: {e.msg}")
                         break
+
+
+class SendFileWorker(QObject):
+    def __init__(self):
+        super().__init__()
+
+    def run(self):
+        pass
 
 
 class Ui_DrizzleMainWindow(QWidget):
@@ -685,7 +694,7 @@ class Ui_DrizzleMainWindow(QWidget):
         self.btn_FileInfo = QPushButton(self.centralwidget)
         self.btn_FileInfo.setObjectName("pushButton_5")
         self.btn_FileInfo.setEnabled(True)
-        self.btn_FileInfo.clicked.connect(lambda: self.show_file_info_dialog(MainWindow))
+        self.btn_FileInfo.clicked.connect(lambda: self.open_file_info(MainWindow))
 
         self.horizontalLayout_2.addWidget(self.btn_FileInfo)
 
@@ -1017,6 +1026,25 @@ class Ui_DrizzleMainWindow(QWidget):
         settings_dialog.ui = Ui_SettingsDialog(settings_dialog, self.user_settings)
         settings_dialog.exec()
 
+    def open_file_info(self, MainWindow):
+        global selected_file_item
+        global selected_uname
+        size = selected_file_item["size"]
+        filedata = {
+            "name": selected_file_item["name"],
+            "hash": selected_file_item["hash"] or "Not available",
+            "type": selected_file_item["type"],
+            "size": convert_size(size or 0),
+            "owner": selected_uname,
+        }
+        if selected_file_item["type"] != "file":
+            size, count = get_directory_size(selected_file_item, 0, 0)
+            filedata["size"] = convert_size(size)
+            filedata["count"] = f"{count} files"
+        file_info_dialog = QDialog(MainWindow)
+        file_info_dialog.ui = Ui_FileInfoDialog(file_info_dialog, filedata)
+        file_info_dialog.exec()
+
     def import_files(self):
         files, _ = QFileDialog.getOpenFileNames(
             self, "Import Files", str(Path.home()), "All Files (*)"
@@ -1033,6 +1061,8 @@ class Ui_DrizzleMainWindow(QWidget):
         dir = QFileDialog.getExistingDirectory(
             self, "Import Folder", str(Path.home()), QFileDialog.ShowDirsOnly
         )
+        if dir == "":
+            return
         imported = import_file_to_share(Path(dir), Path(self.user_settings["share_folder_path"]))
         if imported is not None:
             print(f"Imported file {imported}")

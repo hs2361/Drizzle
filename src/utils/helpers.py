@@ -151,6 +151,8 @@ def get_pending_downloads(transfer_progress: dict[Path, TransferProgress]) -> st
 
 
 def get_directory_size(directory: DirData, size: int, count: int) -> tuple[int, int]:
+    count = 0
+    size = 0
     if directory["children"] is None:
         count += 1
         size += directory["size"]
