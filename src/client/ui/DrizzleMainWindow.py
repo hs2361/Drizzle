@@ -28,9 +28,7 @@ from utils.constants import (
     HEARTBEAT_TIMER,
     LEADING_HTML,
     ONLINE_TIMEOUT,
-    RECV_FOLDER_PATH,
     SERVER_RECV_PORT,
-    SHARE_FOLDER_PATH,
     TEMP_FOLDER_PATH,
     TRAILING_HTML,
 )
@@ -80,7 +78,8 @@ messages_store: dict[str, list[Message]] = {}
 selected_uname: str = ""
 selected_file_item: DirData = {}
 self_uname: str = ""
-transfer_progress: dict[Path, TransferProgress]
+transfer_progress: dict[Path, TransferProgress] = {}
+user_settings: UserSettings = {}
 
 
 class HeartbeatWorker(QObject):
@@ -142,7 +141,7 @@ class HandleFileRequestWorker(QRunnable):
             hash = get_file_hash(str(self.filepath))
 
         filemetadata: FileMetadata = {
-            "path": str(self.filepath).removeprefix(str(SHARE_FOLDER_PATH) + "/"),
+            "path": str(self.filepath).removeprefix(user_settings["share_folder_path"] + "/"),
             "size": self.filepath.stat().st_size,
             "hash": hash if self.request_hash else None,
             # "compression": compression,
@@ -172,7 +171,9 @@ class HandleFileRequestWorker(QRunnable):
                 file_send_socket.close()
             if self.request_hash:
                 update_hash_params: UpdateHashParams = {
-                    "filepath": str(self.filepath).removeprefix(str(SHARE_FOLDER_PATH) + "/"),
+                    "filepath": str(self.filepath).removeprefix(
+                        user_settings["share_folder_path"] + "/"
+                    ),
                     "hash": hash,
                 }
                 update_hash_bytes = msgpack.packb(update_hash_params)
@@ -190,6 +191,7 @@ class ReceiveHandler(QObject):
 
     def receive_msg(self, socket: socket.socket) -> str:
         global client_send_socket
+        global user_settings
         logging.debug(f"Receiving from {socket.getpeername()}")
         message_type = socket.recv(HEADER_TYPE_LEN).decode(FMT)
         if not len(message_type):
@@ -212,7 +214,9 @@ class ReceiveHandler(QObject):
                     file_header_len = int(socket.recv(HEADER_MSG_LEN).decode(FMT))
                     file_header: FileMetadata = msgpack.unpackb(socket.recv(file_header_len))
                     logging.debug(msg=f"receiving file with metadata {file_header}")
-                    write_path: Path = get_unique_filename(RECV_FOLDER_PATH / file_header["path"])
+                    write_path: Path = get_unique_filename(
+                        Path(user_settings["downloads_folder_path"]) / file_header["path"]
+                    )
                     try:
                         file_to_write = open(str(write_path), "wb")
                         logging.debug(f"Creating and writing to {write_path}")
@@ -235,7 +239,9 @@ class ReceiveHandler(QObject):
                     req_header_len = int(socket.recv(HEADER_MSG_LEN).decode(FMT))
                     file_req_header: FileRequest = msgpack.unpackb(socket.recv(req_header_len))
                     logging.debug(msg=f"Received request: {file_req_header}")
-                    requested_file_path = SHARE_FOLDER_PATH / file_req_header["filepath"]
+                    requested_file_path = (
+                        Path(user_settings["share_folder_path"]) / file_req_header["filepath"]
+                    )
                     if requested_file_path.is_file():
                         socket.send(HeaderCode.FILE_REQUEST.value.encode(FMT))
                         # send_file_thread = threading.Thread(
@@ -262,7 +268,9 @@ class ReceiveHandler(QObject):
                             ExceptionCode.BAD_REQUEST,
                         )
                     else:
-                        share_data = msgpack.packb(path_to_dict(SHARE_FOLDER_PATH)["children"])
+                        share_data = msgpack.packb(
+                            path_to_dict(Path(user_settings["share_folder_path"]))["children"]
+                        )
                         share_data_header = f"{HeaderCode.SHARE_DATA.value}{len(share_data):<{HEADER_MSG_LEN}}".encode(
                             FMT
                         )
@@ -403,7 +411,7 @@ class SendFileWorker(QObject):
         else:
             logging.error(f"{self.filepath} not found")
             print(
-                f"\nUnable to perform send request, ensure that the file is available in {SHARE_FOLDER_PATH}"
+                f"\nUnable to perform send request, ensure that the file is available in {user_settings['share_folder_path']}"
             )
         self.completed.emit()
 
@@ -420,6 +428,7 @@ class RequestFileWorker(QRunnable):
 
     def run(self) -> str:
         global transfer_progress
+        global user_settings
         logging.debug(f"Requesting file, progress is {transfer_progress}")
         file_recv_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         file_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -462,9 +471,12 @@ class RequestFileWorker(QRunnable):
                         file_header: FileMetadata = msgpack.unpackb(sender.recv(file_header_len))
                         logging.debug(msg=f"receiving file with metadata {file_header}")
                         # Check if free disk space is available
-                        if shutil.disk_usage(str(RECV_FOLDER_PATH)).free > file_header["size"]:
+                        if (
+                            shutil.disk_usage(user_settings["downloads_folder_path"]).free
+                            > file_header["size"]
+                        ):
                             final_download_path: Path = get_unique_filename(
-                                RECV_FOLDER_PATH / file_header["path"]
+                                Path(user_settings["downloads_folder_path"]) / file_header["path"]
                             )
                             try:
                                 temp_path.parent.mkdir(parents=True, exist_ok=True)
@@ -474,9 +486,12 @@ class RequestFileWorker(QRunnable):
                                 try:
                                     byte_count = 0
                                     hash = hashlib.sha1()
+                                    if transfer_progress.get(temp_path) is None:
+                                        transfer_progress[temp_path] = {}
                                     logging.debug(
                                         msg=f"transfer progress for {str(temp_path)} is {transfer_progress[temp_path]}"
                                     )
+
                                     if (
                                         transfer_progress[temp_path].get(
                                             "status", TransferStatus.NEVER_STARTED
@@ -576,7 +591,9 @@ class Ui_DrizzleMainWindow(QWidget):
     def __init__(self, MainWindow):
         super(Ui_DrizzleMainWindow, self).__init__()
         try:
+            global user_settings
             self.user_settings = MainWindow.user_settings
+            user_settings = MainWindow.user_settings
             SERVER_IP = self.user_settings["server_ip"]
             SERVER_ADDR = (SERVER_IP, SERVER_RECV_PORT)
             client_send_socket.connect(SERVER_ADDR)
