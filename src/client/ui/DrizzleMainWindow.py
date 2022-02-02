@@ -1,6 +1,8 @@
+import hashlib
 import json
 import logging
 import select
+import shutil
 import socket
 import sys
 import threading
@@ -29,6 +31,7 @@ from utils.constants import (
     RECV_FOLDER_PATH,
     SERVER_RECV_PORT,
     SHARE_FOLDER_PATH,
+    TEMP_FOLDER_PATH,
     TRAILING_HTML,
 )
 from utils.exceptions import ExceptionCode, RequestException
@@ -48,6 +51,8 @@ from utils.types import (
     FileRequest,
     HeaderCode,
     Message,
+    TransferProgress,
+    TransferStatus,
     UpdateHashParams,
     UserSettings,
 )
@@ -75,6 +80,7 @@ messages_store: dict[str, list[Message]] = {}
 selected_uname: str = ""
 selected_file_item: DirData = {}
 self_uname: str = ""
+transfer_progress: dict[Path, TransferProgress]
 
 
 class HeartbeatWorker(QObject):
@@ -107,21 +113,21 @@ class HeartbeatWorker(QObject):
                 sys.exit(error_dialog.exec())
 
 
-class ReceiveHandler(QObject):
-    message_received = pyqtSignal(dict)
-    file_received = pyqtSignal(dict)
+class HandleFileRequestWorker(QRunnable):
+    def __init__(
+        self, filepath: Path, requester: tuple[str, int], request_hash: bool, resume_offset: int
+    ):
+        super().__init__()
+        self.filepath = filepath
+        self.requester = requester
+        self.request_hash = request_hash
+        self.resume_offset = resume_offset
 
-    def send_file(
-        self,
-        filepath: Path,
-        requester: tuple[str, int],
-        request_hash: bool,
-        resume_offset: int,
-    ) -> None:
+    def run(self) -> None:
         file_send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         file_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         file_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
-        file_send_socket.connect(requester)
+        file_send_socket.connect(self.requester)
         hash = ""
         # compression = CompressionMethod.NONE
 
@@ -132,13 +138,13 @@ class ReceiveHandler(QObject):
         #     with filepath.open(mode="rb") as uncompressed_file:
         #         with compressor.stream_writer(uncompressed_file) as writer:
         #             pass
-        if request_hash:
-            hash = get_file_hash(str(filepath))
+        if self.request_hash:
+            hash = get_file_hash(str(self.filepath))
 
         filemetadata: FileMetadata = {
-            "path": str(filepath).removeprefix(str(SHARE_FOLDER_PATH) + "/"),
-            "size": filepath.stat().st_size,
-            "hash": hash if request_hash else None,
+            "path": str(self.filepath).removeprefix(str(SHARE_FOLDER_PATH) + "/"),
+            "size": self.filepath.stat().st_size,
+            "hash": hash if self.request_hash else None,
             # "compression": compression,
         }
 
@@ -150,13 +156,13 @@ class ReceiveHandler(QObject):
         )
 
         try:
-            file_to_send = filepath.open(mode="rb")
-            logging.debug(f"Sending file {filemetadata['path']} to {requester}")
+            file_to_send = self.filepath.open(mode="rb")
+            logging.debug(f"Sending file {filemetadata['path']} to {self.requester}")
             file_send_socket.send(filesend_header + filemetadata_bytes)
 
             total_bytes_read = 0
-            file_to_send.seek(resume_offset)
-            while total_bytes_read != filemetadata["size"] - resume_offset:
+            file_to_send.seek(self.resume_offset)
+            while total_bytes_read != filemetadata["size"] - self.resume_offset:
                 time.sleep(0.05)
                 bytes_read = file_to_send.read(FILE_BUFFER_LEN)
                 num_bytes = file_send_socket.send(bytes_read)
@@ -164,9 +170,9 @@ class ReceiveHandler(QObject):
                 print("\nFile Sent")
                 file_to_send.close()
                 file_send_socket.close()
-            if request_hash:
+            if self.request_hash:
                 update_hash_params: UpdateHashParams = {
-                    "filepath": str(filepath).removeprefix(str(SHARE_FOLDER_PATH) + "/"),
+                    "filepath": str(self.filepath).removeprefix(str(SHARE_FOLDER_PATH) + "/"),
                     "hash": hash,
                 }
                 update_hash_bytes = msgpack.packb(update_hash_params)
@@ -176,6 +182,11 @@ class ReceiveHandler(QObject):
                 client_send_socket.send(update_hash_header + update_hash_bytes)
         except Exception as e:
             logging.error(f"File Sending failed: {e}")
+
+
+class ReceiveHandler(QObject):
+    message_received = pyqtSignal(dict)
+    file_received = pyqtSignal(dict)
 
     def receive_msg(self, socket: socket.socket) -> str:
         global client_send_socket
@@ -227,16 +238,23 @@ class ReceiveHandler(QObject):
                     requested_file_path = SHARE_FOLDER_PATH / file_req_header["filepath"]
                     if requested_file_path.is_file():
                         socket.send(HeaderCode.FILE_REQUEST.value.encode(FMT))
-                        send_file_thread = threading.Thread(
-                            target=self.send_file,
-                            args=(
-                                requested_file_path,
-                                (socket.getpeername()[0], file_req_header["port"]),
-                                file_req_header["request_hash"],
-                                file_req_header["resume_offset"],
-                            ),
+                        # send_file_thread = threading.Thread(
+                        #     target=self.send_file,
+                        #     args=(
+                        #         requested_file_path,
+                        #         (socket.getpeername()[0], file_req_header["port"]),
+                        #         file_req_header["request_hash"],
+                        #         file_req_header["resume_offset"],
+                        #     ),
+                        # )
+                        send_file_handler = HandleFileRequestWorker(
+                            requested_file_path,
+                            (socket.getpeername()[0], file_req_header["port"]),
+                            file_req_header["request_hash"],
+                            file_req_header["resume_offset"],
                         )
-                        send_file_thread.start()
+                        send_file_pool = QThreadPool.globalInstance()
+                        send_file_pool.start(send_file_handler)
                         return "File requested by user"
                     elif requested_file_path.is_dir():
                         raise RequestException(
@@ -390,6 +408,166 @@ class SendFileWorker(QObject):
         self.completed.emit()
 
 
+class RequestFileWorker(QRunnable):
+    def __init__(self, file_item: DirData, peer_ip: str, uname: str) -> None:
+        super().__init__()
+        self.file_item = file_item
+        self.peer_ip = peer_ip
+        self.uname = uname
+
+        self.client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.client_peer_socket.connect((self.peer_ip, CLIENT_RECV_PORT))
+
+    def run(self) -> str:
+        global transfer_progress
+        logging.debug(f"Requesting file, progress is {transfer_progress}")
+        file_recv_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        file_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        file_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
+        file_recv_socket.bind((CLIENT_IP, 0))
+        file_recv_socket.listen()
+        file_recv_port = file_recv_socket.getsockname()[1]
+
+        offset = 0
+        temp_path: Path = TEMP_FOLDER_PATH.joinpath(self.uname + "/" + self.file_item["path"])
+        logging.debug(f"Using temp path {str(temp_path)}")
+        if temp_path.exists():
+            offset = temp_path.stat().st_size
+
+        logging.debug(f"Offset of {offset} bytes")
+        request_hash = self.file_item["hash"] is None
+        file_request: FileRequest = {
+            "port": file_recv_port,
+            "filepath": self.file_item["path"],
+            "request_hash": request_hash,
+            "resume_offset": offset,
+        }
+
+        file_req_bytes = msgpack.packb(file_request)
+        file_req_header = (
+            f"{HeaderCode.FILE_REQUEST.value}{len(file_req_bytes):<{HEADER_MSG_LEN}}".encode(FMT)
+        )
+        self.client_peer_socket.send(file_req_header + file_req_bytes)
+
+        try:
+            res_type = self.client_peer_socket.recv(HEADER_TYPE_LEN).decode(FMT)
+            logging.debug(f"received header type {res_type} from sender")
+            match res_type:
+                case HeaderCode.FILE_REQUEST.value:
+                    sender, _ = file_recv_socket.accept()
+                    logging.debug(msg=f"Sender tried to connect: {sender.getpeername()}")
+                    res_type = sender.recv(HEADER_TYPE_LEN).decode(FMT)
+                    if res_type == HeaderCode.FILE.value:
+                        file_header_len = int(sender.recv(HEADER_MSG_LEN).decode(FMT))
+                        file_header: FileMetadata = msgpack.unpackb(sender.recv(file_header_len))
+                        logging.debug(msg=f"receiving file with metadata {file_header}")
+                        # Check if free disk space is available
+                        if shutil.disk_usage(str(RECV_FOLDER_PATH)).free > file_header["size"]:
+                            final_download_path: Path = get_unique_filename(
+                                RECV_FOLDER_PATH / file_header["path"]
+                            )
+                            try:
+                                temp_path.parent.mkdir(parents=True, exist_ok=True)
+                                file_to_write = temp_path.open("ab")
+                                # transfer_progress[temp_path] = {}
+                                logging.debug(f"Creating and writing to {temp_path}")
+                                try:
+                                    byte_count = 0
+                                    hash = hashlib.sha1()
+                                    logging.debug(
+                                        msg=f"transfer progress for {str(temp_path)} is {transfer_progress[temp_path]}"
+                                    )
+                                    if (
+                                        transfer_progress[temp_path].get(
+                                            "status", TransferStatus.NEVER_STARTED
+                                        )
+                                        != TransferStatus.PAUSED
+                                    ):
+                                        transfer_progress[temp_path][
+                                            "status"
+                                        ] = TransferStatus.DOWNLOADING
+                                    while True:
+                                        if (
+                                            transfer_progress[temp_path]["status"]
+                                            == TransferStatus.PAUSED
+                                        ):
+                                            file_to_write.close()
+                                            file_recv_socket.close()
+                                            return f"Download for file {file_header['path']} was paused"
+                                        file_bytes_read: bytes = sender.recv(FILE_BUFFER_LEN)
+                                        if not offset:
+                                            hash.update(file_bytes_read)
+                                        num_bytes_read = len(file_bytes_read)
+                                        byte_count += num_bytes_read
+                                        transfer_progress[temp_path]["progress"] = byte_count
+                                        file_to_write.write(file_bytes_read)
+                                        # logging.debug(
+                                        #     msg=f"Received chunk of size {num_bytes_read}, received {byte_count} of {file_header['size']}"
+                                        # )
+                                        if num_bytes_read == 0:
+                                            break
+
+                                    hash_str = ""
+                                    if offset:
+                                        file_to_write.seek(0)
+                                        hash_str = get_file_hash(str(temp_path))
+                                    file_to_write.close()
+
+                                    received_hash = hash.hexdigest() if not offset else hash_str
+                                    if (request_hash and received_hash == file_header["hash"]) or (
+                                        received_hash == self.file_item["hash"]
+                                    ):
+                                        transfer_progress[temp_path][
+                                            "status"
+                                        ] = TransferStatus.COMPLETED
+                                        final_download_path.parent.mkdir(
+                                            parents=True, exist_ok=True
+                                        )
+                                        shutil.move(temp_path, final_download_path)
+                                        print("Succesfully received 1 file")
+                                    else:
+                                        transfer_progress[temp_path] = TransferStatus.FAILED
+                                        logging.error(
+                                            msg=f"Failed integrity check for file {file_header['path']}"
+                                        )
+                                except Exception as e:
+                                    logging.error(e, exc_info=True)
+                                    print("File received but failed to save")
+                            except Exception as e:
+                                logging.error(e, exc_info=True)
+                                print("Unable to write file")
+                        else:
+                            logging.error(
+                                msg=f"Not enough space to receive file {file_header['path']}, {file_header['size']}"
+                            )
+                    else:
+                        raise RequestException(
+                            f"Sender sent invalid message type in header: {res_type}",
+                            ExceptionCode.INVALID_HEADER,
+                        )
+                case HeaderCode.ERROR.value:
+                    res_len = int(self.client_peer_socket.recv(HEADER_MSG_LEN).decode(FMT).strip())
+                    res = self.client_peer_socket.recv(res_len)
+                    err: RequestException = msgpack.unpackb(
+                        res,
+                        object_hook=RequestException.from_dict,
+                        raw=False,
+                    )
+                    raise err
+                case _:
+                    err = RequestException(
+                        f"Invalid message type in header: {res_type}",
+                        ExceptionCode.INVALID_HEADER,
+                    )
+                    raise err
+        except UnicodeDecodeError as e:
+            logging.error(f"UnicodeDecodeError: {e}")
+            raise RequestException("Invalid message type in header", ExceptionCode.INVALID_HEADER)
+        except Exception as e:
+            logging.error(e)
+            raise e
+
+
 class Ui_DrizzleMainWindow(QWidget):
     global client_send_socket
     global client_recv_socket
@@ -533,6 +711,34 @@ class Ui_DrizzleMainWindow(QWidget):
         message_box.setInformativeText(json.dumps(item_info, indent=4, sort_keys=True))
         message_box.addButton(QMessageBox.Close)
         message_box.exec()
+
+    def download_file(self):
+        global selected_uname
+        global client_send_socket
+        global transfer_progress
+        global selected_file_item
+
+        peer_ip = request_ip(selected_uname, client_send_socket)
+        if peer_ip is None:
+            logging.error(f"Selected user {selected_uname} does not exist")
+            return
+            # TODO: add error dialog
+
+        transfer_progress[TEMP_FOLDER_PATH / selected_uname / selected_file_item["path"]] = {
+            "progress": 0,
+            "status": TransferStatus.NEVER_STARTED,
+        }
+
+        # executor.submit(
+        #     req_file_worker,
+        #     file_item,
+        #     selected_user["uname"],
+        #     peer_ip,
+        #     progress_bar,
+        # )
+        request_file_worker = RequestFileWorker(selected_file_item, peer_ip, selected_uname)
+        request_file_pool = QThreadPool.globalInstance()
+        request_file_pool.start(request_file_worker)
 
     def construct_message_html(self, message: Message, is_self: bool):
         return f"""<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">
@@ -753,6 +959,7 @@ class Ui_DrizzleMainWindow(QWidget):
         self.btn_FileDownload = QPushButton(self.centralwidget)
         self.btn_FileDownload.setObjectName("pushButton_4")
         self.btn_FileDownload.setEnabled(True)
+        self.btn_FileDownload.clicked.connect(self.download_file)
 
         self.horizontalLayout_2.addWidget(self.btn_FileDownload)
 
