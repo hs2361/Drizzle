@@ -333,6 +333,7 @@ class ReceiveHandler(QObject):
 
 class SendFileWorker(QObject):
     sending_file = pyqtSignal(dict)
+    completed = pyqtSignal()
 
     def __init__(self, filepath: Path):
         super().__init__()
@@ -369,6 +370,10 @@ class SendFileWorker(QObject):
                     messages_store[selected_uname] = [{"sender": self_uname, "content": msg}]
                 self.sending_file.emit({"sender": self_uname, "content": msg})
                 while total_bytes_read != filemetadata["size"]:
+                    logging.debug(
+                        f'sending file bytes {total_bytes_read} of {filemetadata["size"]}'
+                    )
+                    time.sleep(0.1)
                     bytes_read = file_to_send.read(FILE_BUFFER_LEN)
                     self.client_peer_socket.sendall(bytes_read)
                     num_bytes = len(bytes_read)
@@ -382,6 +387,7 @@ class SendFileWorker(QObject):
             print(
                 f"\nUnable to perform send request, ensure that the file is available in {SHARE_FOLDER_PATH}"
             )
+        self.completed.emit()
 
 
 class Ui_DrizzleMainWindow(QWidget):
@@ -1126,4 +1132,8 @@ class Ui_DrizzleMainWindow(QWidget):
         self.send_file_worker.moveToThread(self.send_file_thread)
         self.send_file_thread.started.connect(self.send_file_worker.run)
         self.send_file_worker.sending_file.connect(self.messages_controller)
+        self.send_file_worker.completed.connect(self.send_file_thread.quit)
+        self.send_file_worker.completed.connect(self.send_file_worker.deleteLater)
+        self.send_file_thread.finished.connect(self.send_file_thread.deleteLater)
+
         self.send_file_thread.start()
