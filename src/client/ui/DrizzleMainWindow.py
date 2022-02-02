@@ -162,13 +162,12 @@ class HandleFileRequestWorker(QRunnable):
             total_bytes_read = 0
             file_to_send.seek(self.resume_offset)
             while total_bytes_read != filemetadata["size"] - self.resume_offset:
-                time.sleep(0.05)
                 bytes_read = file_to_send.read(FILE_BUFFER_LEN)
                 num_bytes = file_send_socket.send(bytes_read)
                 total_bytes_read += num_bytes
                 print("\nFile Sent")
-                file_to_send.close()
-                file_send_socket.close()
+            file_to_send.close()
+            file_send_socket.close()
             if self.request_hash:
                 update_hash_params: UpdateHashParams = {
                     "filepath": str(self.filepath).removeprefix(
@@ -182,7 +181,7 @@ class HandleFileRequestWorker(QRunnable):
                 )
                 client_send_socket.send(update_hash_header + update_hash_bytes)
         except Exception as e:
-            logging.error(f"File Sending failed: {e}")
+            logging.error(f"File Sending failed: {e}", exc_info=True)
 
 
 class ReceiveHandler(QObject):
@@ -541,7 +540,9 @@ class RequestFileWorker(QRunnable):
                                         shutil.move(temp_path, final_download_path)
                                         print("Succesfully received 1 file")
                                     else:
-                                        transfer_progress[temp_path] = TransferStatus.FAILED
+                                        transfer_progress[temp_path][
+                                            "status"
+                                        ] = TransferStatus.FAILED
                                         logging.error(
                                             msg=f"Failed integrity check for file {file_header['path']}"
                                         )
