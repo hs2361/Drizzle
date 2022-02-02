@@ -5,7 +5,6 @@ import select
 import shutil
 import socket
 import sys
-import threading
 import time
 from pathlib import Path
 
@@ -37,6 +36,7 @@ from utils.helpers import (
     convert_size,
     get_directory_size,
     get_file_hash,
+    get_files_in_dir,
     get_unique_filename,
     import_file_to_share,
     path_to_dict,
@@ -398,7 +398,7 @@ class SendFileWorker(QObject):
                     logging.debug(
                         f'sending file bytes {total_bytes_read} of {filemetadata["size"]}'
                     )
-                    time.sleep(0.1)
+                    # time.sleep(0.1)
                     bytes_read = file_to_send.read(FILE_BUFFER_LEN)
                     self.client_peer_socket.sendall(bytes_read)
                     num_bytes = len(bytes_read)
@@ -597,7 +597,9 @@ class Ui_DrizzleMainWindow(QWidget):
             user_settings = MainWindow.user_settings
             SERVER_IP = self.user_settings["server_ip"]
             SERVER_ADDR = (SERVER_IP, SERVER_RECV_PORT)
+            client_send_socket.settimeout(10)
             client_send_socket.connect(SERVER_ADDR)
+            client_send_socket.settimeout(None)
             self_uname = self.user_settings["uname"]
             username = self_uname.encode(FMT)
             username_header = (
@@ -754,9 +756,24 @@ class Ui_DrizzleMainWindow(QWidget):
         #     peer_ip,
         #     progress_bar,
         # )
-        request_file_worker = RequestFileWorker(selected_file_item, peer_ip, selected_uname)
         request_file_pool = QThreadPool.globalInstance()
-        request_file_pool.start(request_file_worker)
+        if selected_file_item["type"] == "file":
+            request_file_worker = RequestFileWorker(selected_file_item, peer_ip, selected_uname)
+            request_file_pool.start(request_file_worker)
+        else:
+            files_to_request: list[DirData] = []
+            get_files_in_dir(
+                selected_file_item["children"],
+                files_to_request,
+            )
+            for f in files_to_request:
+                transfer_progress[TEMP_FOLDER_PATH / selected_uname / f["path"]] = {
+                    "progress": 0,
+                    "status": TransferStatus.NEVER_STARTED,
+                }
+            for file in files_to_request:
+                request_file_worker = RequestFileWorker(file, peer_ip, selected_uname)
+                request_file_pool.start(request_file_worker)
 
     def construct_message_html(self, message: Message, is_self: bool):
         return f"""<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">
