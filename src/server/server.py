@@ -12,10 +12,10 @@ sys.path.append("../")
 from utils.constants import FMT, HEADER_MSG_LEN, HEADER_TYPE_LEN, SERVER_RECV_PORT
 from utils.exceptions import ExceptionCode, RequestException
 from utils.helpers import update_file_hash
-from utils.socket_functions import get_ip, recvall
+from utils.socket_functions import get_self_ip, recvall
 from utils.types import DBData, DirData, HeaderCode, SocketMessage, UpdateHashParams
 
-IP = get_ip()
+IP = get_self_ip()
 
 
 logging.basicConfig(

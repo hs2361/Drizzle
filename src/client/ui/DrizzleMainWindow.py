@@ -42,7 +42,13 @@ from utils.helpers import (
     import_file_to_share,
     path_to_dict,
 )
-from utils.socket_functions import get_ip, recvall, request_ip, update_share_data
+from utils.socket_functions import (
+    get_self_ip,
+    recvall,
+    request_ip,
+    request_uname,
+    update_share_data,
+)
 from utils.types import (
     DBData,
     DirData,
@@ -59,8 +65,15 @@ from utils.types import (
 
 SERVER_IP = ""
 SERVER_ADDR = ()
-CLIENT_IP = get_ip()
+CLIENT_IP = get_self_ip()
 
+logging.basicConfig(
+    level=logging.DEBUG,
+    handlers=[
+        logging.FileHandler(f"{str(Path.home())}/.Drizzle/logs/client.log"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
 
 client_send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # to connect to main server
 client_recv_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # to receive new connections
@@ -84,6 +97,8 @@ transfer_progress: dict[Path, TransferProgress] = {}
 progress_widgets: dict[Path, Ui_FileProgressWidget] = {}
 dir_progress: dict[Path, DirProgress] = {}
 user_settings: UserSettings = {}
+uname_to_ip: dict[str, str] = {}
+ip_to_uname: dict[str, str] = {}
 
 server_socket_mutex = QMutex()
 
@@ -158,7 +173,7 @@ class HandleFileRequestWorker(QRunnable):
 
         logging.debug(filemetadata)
         filemetadata_bytes = msgpack.packb(filemetadata)
-        logging.debug(filemetadata_bytes)
+        # logging.debug(filemetadata_bytes)
         filesend_header = (
             f"{HeaderCode.FILE.value}{len(filemetadata_bytes):<{HEADER_MSG_LEN}}".encode(FMT)
         )
@@ -271,6 +286,7 @@ class ReceiveHandler(QObject):
                             file_req_header["resume_offset"],
                         )
                         send_file_pool = QThreadPool.globalInstance()
+                        send_file_pool.setMaxThreadCount(4)
                         send_file_pool.start(send_file_handler)
                         return "File requested by user"
                     elif requested_file_path.is_dir():
@@ -304,7 +320,9 @@ class ReceiveHandler(QObject):
         global client_send_socket
         global client_recv_socket
         global connected
-        peers: dict[str, str] = {}
+        global server_socket_mutex
+
+        # peers: dict[str, str] = {}
 
         while True:
             read_sockets: list[socket.socket]
@@ -316,49 +334,19 @@ class ReceiveHandler(QObject):
                         msg=f"Accepted new connection from {peer_addr[0]}:{peer_addr[1]}",
                     )
                     try:
-                        connected.append(peer_socket)
-                        lookup = peer_addr[0].encode(FMT)
-                        header = f"{HeaderCode.REQUEST_UNAME.value}{len(lookup):<{HEADER_MSG_LEN}}".encode(
-                            FMT
-                        )
-                        logging.debug(msg=f"Sending packet {(header + lookup).decode(FMT)}")
-                        server_socket_mutex.lock()
-                        client_send_socket.send(header + lookup)
-                        res_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
-                        server_socket_mutex.unlock()
-                        if res_type not in [
-                            HeaderCode.REQUEST_UNAME.value,
-                            HeaderCode.ERROR.value,
-                        ]:
-                            raise RequestException(
-                                msg="Invalid message type in header",
-                                code=ExceptionCode.INVALID_HEADER,
-                            )
-                        else:
+                        if ip_to_uname.get(peer_addr[0]) is None:
                             server_socket_mutex.lock()
-                            response_length = int(
-                                client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip()
-                            )
-                            response = client_send_socket.recv(response_length)
+                            peer_uname = request_uname(peer_addr[0], client_send_socket)
                             server_socket_mutex.unlock()
-                            if res_type == HeaderCode.REQUEST_UNAME.value:
-                                username = response.decode(FMT)
-                                print(f"\nUser {username} is trying to send a message")
-                                peers[peer_addr[0]] = username
-                            else:
-                                exception = msgpack.unpackb(
-                                    response,
-                                    object_hook=RequestException.from_dict,
-                                    raw=False,
-                                )
-                                logging.error(msg=exception)
-                                raise exception
-                    except RequestException as e:
-                        logging.error(msg=e)
+                            if peer_uname is not None:
+                                connected.append(peer_socket)
+                                ip_to_uname[peer_addr[0]] = peer_uname
+                    except Exception as e:
+                        logging.error(msg=e, exc_info=True)
                         break
                 else:
                     try:
-                        username = peers[notified_socket.getpeername()[0]]
+                        username = ip_to_uname[notified_socket.getpeername()[0]]
                         message_content: str = self.receive_msg(notified_socket)
                         message: Message = {"sender": username, "content": message_content}
                         if messages_store.get(username) is not None:
@@ -387,7 +375,13 @@ class SendFileWorker(QObject):
         super().__init__()
         self.filepath = filepath
         server_socket_mutex.lock()
-        peer_ip = request_ip(selected_uname, client_send_socket)
+        peer_ip = ""
+        if uname_to_ip.get(selected_uname) is None:
+            peer_ip = request_ip(selected_uname, client_send_socket)
+            uname_to_ip[selected_uname] = peer_ip
+        else:
+            peer_ip = uname_to_ip.get(selected_uname)
+
         server_socket_mutex.unlock()
         if peer_ip is not None:
             self.client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -460,10 +454,12 @@ class RequestFileWorker(QRunnable):
         self.client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.client_peer_socket.connect((self.peer_ip, CLIENT_RECV_PORT))
 
+        logging.debug(msg=f"Thread worker for requesting {uname}/{file_item['name']}")
+
     def run(self) -> str:
         global transfer_progress
         global user_settings
-        logging.debug(f"Requesting file, progress is {transfer_progress}")
+        # logging.debug(f"Requesting file, progress is {transfer_progress}")
         file_recv_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         file_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         file_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
@@ -523,9 +519,9 @@ class RequestFileWorker(QRunnable):
                                     hash = hashlib.sha1()
                                     if transfer_progress.get(temp_path) is None:
                                         transfer_progress[temp_path] = {}
-                                    logging.debug(
-                                        msg=f"transfer progress for {str(temp_path)} is {transfer_progress[temp_path]}"
-                                    )
+                                    # logging.debug(
+                                    #     msg=f"transfer progress for {str(temp_path)} is {transfer_progress[temp_path]}"
+                                    # )
 
                                     if (
                                         transfer_progress[temp_path].get(
@@ -715,7 +711,12 @@ class Ui_DrizzleMainWindow(QWidget):
         if self.txtedit_MessageInput.toPlainText() == "":
             return
         server_socket_mutex.lock()
-        peer_ip = request_ip(selected_uname, client_send_socket)
+        peer_ip = ""
+        if uname_to_ip.get(selected_uname) is None:
+            peer_ip = request_ip(selected_uname, client_send_socket)
+            uname_to_ip[selected_uname] = peer_ip
+        else:
+            peer_ip = uname_to_ip.get(selected_uname)
         server_socket_mutex.unlock()
         client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client_peer_socket.connect((peer_ip, CLIENT_RECV_PORT))
@@ -797,12 +798,19 @@ class Ui_DrizzleMainWindow(QWidget):
         global transfer_progress
         global selected_file_items
         global server_socket_mutex
+        global uname_to_ip
 
         request_file_pool = QThreadPool.globalInstance()
+        request_file_pool.setMaxThreadCount(4)
 
         for selected_item in selected_file_items:
             server_socket_mutex.lock()
-            peer_ip = request_ip(selected_uname, client_send_socket)
+            peer_ip = ""
+            if uname_to_ip.get(selected_uname) is None:
+                peer_ip = request_ip(selected_uname, client_send_socket)
+                uname_to_ip[selected_uname] = peer_ip
+            else:
+                peer_ip = uname_to_ip.get(selected_uname)
             server_socket_mutex.unlock()
             if peer_ip is None:
                 logging.error(f"Selected user {selected_uname} does not exist")
@@ -1329,7 +1337,7 @@ class Ui_DrizzleMainWindow(QWidget):
         self.send_file_thread.start()
 
     def new_file_progress(self, path: Path):
-        logging.debug("New file progress")
+        logging.debug(msg="New file progress")
         global progress_widgets
         file_progress_widget = QWidget(self.scrollContents_FileProgress)
         file_progress_widget.ui = Ui_FileProgressWidget(file_progress_widget, path)

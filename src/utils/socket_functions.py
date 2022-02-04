@@ -10,7 +10,7 @@ from utils.helpers import path_to_dict
 from utils.types import HeaderCode
 
 
-def get_ip():
+def get_self_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.settimeout(0)
     try:
@@ -21,6 +21,34 @@ def get_ip():
     finally:
         s.close()
     return ip
+
+
+def request_uname(ip: str, client_send_socket: socket.socket) -> str | None:
+    ip_bytes = ip.encode(FMT)
+    request_header = f"{HeaderCode.REQUEST_UNAME.value}{len(ip_bytes):<{HEADER_MSG_LEN}}".encode(
+        FMT
+    )
+    logging.debug(msg=f"Sent packet {(request_header + ip_bytes).decode(FMT)}")
+    client_send_socket.send(request_header + ip_bytes)
+    res_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
+    logging.debug(msg=f"Response type: {res_type}")
+    response_length = int(client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip())
+    peer_ip_bytes = client_send_socket.recv(response_length)
+    if res_type == HeaderCode.REQUEST_UNAME.value:
+        return peer_ip_bytes.decode(FMT)
+    elif res_type == HeaderCode.ERROR.value:
+        res_len = int(client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip())
+        res = client_send_socket.recv(res_len)
+        error: RequestException = msgpack.unpackb(
+            res,
+            object_hook=RequestException.from_dict,
+            raw=False,
+        )
+        logging.error(msg=error)
+        return None
+    else:
+        logging.error(f"Invalid message type in header: {res_type}")
+        return None
 
 
 def request_ip(uname: str, client_send_socket: socket.socket) -> str | None:
