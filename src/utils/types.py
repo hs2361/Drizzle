@@ -1,6 +1,8 @@
 from enum import Enum
 from typing import NamedTuple, TypedDict
 
+from PyQt5.QtCore import QMutex
+
 
 class HeaderCode(Enum):
     ERROR = "e"
@@ -33,6 +35,14 @@ class TransferStatus(Enum):
 class TransferProgress(TypedDict):
     status: TransferStatus
     progress: int
+    percent_progress: float
+
+
+class DirProgress(TypedDict):
+    mutex: QMutex
+    current: int
+    total: int
+    status: TransferStatus
 
 
 class SocketMessage(TypedDict):

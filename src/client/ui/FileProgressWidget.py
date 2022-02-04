@@ -1,20 +1,21 @@
 import sys
+from pathlib import Path
 
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 from PyQt5.QtWidgets import *
 
 sys.path.append("../")
-from utils.types import TransferProgress
 
 
 class Ui_FileProgressWidget(QWidget):
-    def __init__(self, Widget, progress_data: tuple[str, TransferProgress]):
+    def __init__(self, Widget, item_path: Path):
         super(Ui_FileProgressWidget, self).__init__()
-        self.progress_data = progress_data
+        self.path = item_path
+        self.setupUi(Widget)
 
-    def update_progress(self, new_val: int):
-        self.progressBar.setValue(new_val)
+    def update_progress(self, new_val: float):
+        self.progressBar.setValue(int(new_val))
 
     def setupUi(self, Widget):
         if not Widget.objectName():
@@ -36,8 +37,8 @@ class Ui_FileProgressWidget(QWidget):
         sizePolicy1.setVerticalStretch(0)
         sizePolicy1.setHeightForWidth(self.label.sizePolicy().hasHeightForWidth())
         self.label.setSizePolicy(sizePolicy1)
-        self.label.setMinimumSize(QSize(150, 0))
-        self.label.setMaximumSize(QSize(150, 16777215))
+        self.label.setMinimumSize(QSize(120, 0))
+        self.label.setMaximumSize(QSize(120, 16777215))
         self.label.setBaseSize(QSize(0, 0))
         font = QFont()
         font.setBold(True)
@@ -66,7 +67,8 @@ class Ui_FileProgressWidget(QWidget):
     # setupUi
 
     def retranslateUi(self, Widget):
-        self.label.setText(QCoreApplication.translate("Widget", "FileName", None))
+        self.label.setText(QCoreApplication.translate("Widget", f"{self.path.name}", None))
+        self.label.setToolTip(str(self.path))
         self.pushButton.setText(QCoreApplication.translate("Widget", "Pause", None))
 
     # retranslateUi

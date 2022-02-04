@@ -14,6 +14,7 @@ from PyQt5.QtGui import QFont, QIcon
 from PyQt5.QtWidgets import *
 from ui.ErrorDialog import Ui_ErrorDialog
 from ui.FileInfoDialog import Ui_FileInfoDialog
+from ui.FileProgressWidget import Ui_FileProgressWidget
 from ui.SettingsDialog import Ui_SettingsDialog
 
 sys.path.append("../")
@@ -45,6 +46,7 @@ from utils.socket_functions import get_ip, recvall, request_ip, update_share_dat
 from utils.types import (
     DBData,
     DirData,
+    DirProgress,
     FileMetadata,
     FileRequest,
     HeaderCode,
@@ -76,9 +78,11 @@ connected = [client_recv_socket]
 uname_to_status: dict[str, int] = {}
 messages_store: dict[str, list[Message]] = {}
 selected_uname: str = ""
-selected_file_item: DirData = {}
+selected_file_items: list[DirData] = []
 self_uname: str = ""
 transfer_progress: dict[Path, TransferProgress] = {}
+progress_widgets: dict[Path, Ui_FileProgressWidget] = {}
+dir_progress: dict[Path, DirProgress] = {}
 user_settings: UserSettings = {}
 
 
@@ -214,7 +218,8 @@ class ReceiveHandler(QObject):
                     file_header: FileMetadata = msgpack.unpackb(socket.recv(file_header_len))
                     logging.debug(msg=f"receiving file with metadata {file_header}")
                     write_path: Path = get_unique_filename(
-                        Path(user_settings["downloads_folder_path"]) / file_header["path"]
+                        Path(user_settings["downloads_folder_path"]) / file_header["path"],
+                        Path(user_settings["downloads_folder_path"]),
                     )
                     try:
                         file_to_write = open(str(write_path), "wb")
@@ -268,7 +273,10 @@ class ReceiveHandler(QObject):
                         )
                     else:
                         share_data = msgpack.packb(
-                            path_to_dict(Path(user_settings["share_folder_path"]))["children"]
+                            path_to_dict(
+                                Path(user_settings["share_folder_path"]),
+                                user_settings["share_folder_path"],
+                            )["children"]
                         )
                         share_data_header = f"{HeaderCode.SHARE_DATA.value}{len(share_data):<{HEADER_MSG_LEN}}".encode(
                             FMT
@@ -415,12 +423,22 @@ class SendFileWorker(QObject):
         self.completed.emit()
 
 
+class RequestFileSignals(QObject):
+    receiving_new_file = pyqtSignal(Path)
+    file_progress_update = pyqtSignal(Path)
+    dir_progress_update = pyqtSignal(tuple)
+
+
 class RequestFileWorker(QRunnable):
-    def __init__(self, file_item: DirData, peer_ip: str, uname: str) -> None:
+    def __init__(
+        self, file_item: DirData, peer_ip: str, uname: str, parent_dir: Path | None
+    ) -> None:
         super().__init__()
         self.file_item = file_item
         self.peer_ip = peer_ip
         self.uname = uname
+        self.parent_dir = parent_dir
+        self.worker_signals = RequestFileSignals()
 
         self.client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.client_peer_socket.connect((self.peer_ip, CLIENT_RECV_PORT))
@@ -475,7 +493,8 @@ class RequestFileWorker(QRunnable):
                             > file_header["size"]
                         ):
                             final_download_path: Path = get_unique_filename(
-                                Path(user_settings["downloads_folder_path"]) / file_header["path"]
+                                Path(user_settings["downloads_folder_path"]) / file_header["path"],
+                                Path(user_settings["downloads_folder_path"]),
                             )
                             try:
                                 temp_path.parent.mkdir(parents=True, exist_ok=True)
@@ -500,6 +519,9 @@ class RequestFileWorker(QRunnable):
                                         transfer_progress[temp_path][
                                             "status"
                                         ] = TransferStatus.DOWNLOADING
+                                    if offset == 0:
+                                        if self.parent_dir is None:
+                                            self.worker_signals.receiving_new_file.emit(temp_path)
                                     while True:
                                         if (
                                             transfer_progress[temp_path]["status"]
@@ -514,10 +536,19 @@ class RequestFileWorker(QRunnable):
                                         num_bytes_read = len(file_bytes_read)
                                         byte_count += num_bytes_read
                                         transfer_progress[temp_path]["progress"] = byte_count
+                                        transfer_progress[temp_path]["percent_progress"] = (
+                                            100 * byte_count / file_header["size"]
+                                        )
                                         file_to_write.write(file_bytes_read)
                                         # logging.debug(
                                         #     msg=f"Received chunk of size {num_bytes_read}, received {byte_count} of {file_header['size']}"
                                         # )
+                                        if self.parent_dir is None:
+                                            self.worker_signals.file_progress_update.emit(temp_path)
+                                        else:
+                                            self.worker_signals.dir_progress_update.emit(
+                                                (self.parent_dir, num_bytes_read)
+                                            )
                                         if num_bytes_read == 0:
                                             break
 
@@ -705,75 +736,97 @@ class Ui_DrizzleMainWindow(QWidget):
                 dir_item.setData(0, Qt.UserRole, item)
                 self.render_file_tree(item["children"], dir_item)
 
-    def on_file_item_selected(self, item: QTreeWidgetItem, column: int):
-        global selected_file_item
-        data: DirData = item.data(column, Qt.UserRole)
-        selected_file_item = data
-        self.lbl_FileInfo.setText(data["name"])
+    def on_file_item_selected(self):
+        global selected_file_items
+        selected_items = self.file_tree.selectedItems()
+        selected_file_items = []
+        for item in selected_items:
+            data: DirData = item.data(0, Qt.UserRole)
+            selected_file_items.append(data)
+        if len(selected_items) == 1:
+            self.lbl_FileInfo.setText(selected_file_items[0]["name"])
+            self.btn_FileInfo.setEnabled(True)
+        else:
+            self.lbl_FileInfo.setText(f"{len(selected_items)} items selected")
+            self.btn_FileInfo.setEnabled(False)
 
     def show_file_info_dialog(self, MainWindow):
-        global selected_file_item
-        size = selected_file_item["size"]
+        global selected_file_items
+        selected_item = selected_file_items[0]
+        size = selected_item["size"]
         item_info = {
-            "name": selected_file_item["name"],
-            "hash": selected_file_item["hash"] or "Not available",
-            "type": selected_file_item["type"],
+            "name": selected_item["name"],
+            "hash": selected_item["hash"] or "Not available",
+            "type": selected_item["type"],
             "size": convert_size(size or 0),
         }
-        if selected_file_item["type"] != "file":
-            size, count = get_directory_size(selected_file_item, 0, 0)
+        if selected_item["type"] != "file":
+            size, count = get_directory_size(selected_item, 0, 0)
             item_info["size"] = convert_size(size)
             item_info["count"] = f"{count} files"
         message_box = QMessageBox(MainWindow)
         message_box.setIcon(QMessageBox.Information)
         message_box.setWindowTitle("File Info")
-        message_box.setText(selected_file_item["name"])
+        message_box.setText(selected_item["name"])
         message_box.setInformativeText(json.dumps(item_info, indent=4, sort_keys=True))
         message_box.addButton(QMessageBox.Close)
         message_box.exec()
 
-    def download_file(self):
+    def download_files(self):
         global selected_uname
         global client_send_socket
         global transfer_progress
-        global selected_file_item
+        global selected_file_items
 
-        peer_ip = request_ip(selected_uname, client_send_socket)
-        if peer_ip is None:
-            logging.error(f"Selected user {selected_uname} does not exist")
-            return
-            # TODO: add error dialog
-
-        transfer_progress[TEMP_FOLDER_PATH / selected_uname / selected_file_item["path"]] = {
-            "progress": 0,
-            "status": TransferStatus.NEVER_STARTED,
-        }
-
-        # executor.submit(
-        #     req_file_worker,
-        #     file_item,
-        #     selected_user["uname"],
-        #     peer_ip,
-        #     progress_bar,
-        # )
         request_file_pool = QThreadPool.globalInstance()
-        if selected_file_item["type"] == "file":
-            request_file_worker = RequestFileWorker(selected_file_item, peer_ip, selected_uname)
-            request_file_pool.start(request_file_worker)
-        else:
-            files_to_request: list[DirData] = []
-            get_files_in_dir(
-                selected_file_item["children"],
-                files_to_request,
-            )
-            for f in files_to_request:
-                transfer_progress[TEMP_FOLDER_PATH / selected_uname / f["path"]] = {
-                    "progress": 0,
-                    "status": TransferStatus.NEVER_STARTED,
-                }
-            for file in files_to_request:
-                request_file_worker = RequestFileWorker(file, peer_ip, selected_uname)
+
+        for selected_item in selected_file_items:
+            peer_ip = request_ip(selected_uname, client_send_socket)
+            if peer_ip is None:
+                logging.error(f"Selected user {selected_uname} does not exist")
+                return
+                # TODO: add error dialog
+
+            transfer_progress[TEMP_FOLDER_PATH / selected_uname / selected_item["path"]] = {
+                "progress": 0,
+                "status": TransferStatus.NEVER_STARTED,
+            }
+            if selected_item["type"] == "file":
+                request_file_worker = RequestFileWorker(
+                    selected_item, peer_ip, selected_uname, None
+                )
+                request_file_worker.worker_signals.receiving_new_file.connect(
+                    self.new_file_progress
+                )
+                request_file_worker.worker_signals.file_progress_update.connect(
+                    self.update_file_progress
+                )
                 request_file_pool.start(request_file_worker)
+            else:
+                files_to_request: list[DirData] = []
+                get_files_in_dir(
+                    selected_item["children"],
+                    files_to_request,
+                )
+                dir_path = TEMP_FOLDER_PATH / selected_uname / selected_item["path"]
+                dir_progress[dir_path] = {
+                    "current": 0,
+                    "total": get_directory_size(selected_item, 0, 0)[0],
+                    "status": TransferStatus.DOWNLOADING,
+                    "mutex": QMutex(),
+                }
+                self.new_file_progress(dir_path)
+                for f in files_to_request:
+                    transfer_progress[TEMP_FOLDER_PATH / selected_uname / f["path"]] = {
+                        "progress": 0,
+                        "status": TransferStatus.NEVER_STARTED,
+                    }
+                for file in files_to_request:
+                    request_file_worker = RequestFileWorker(file, peer_ip, selected_uname, dir_path)
+                    request_file_worker.worker_signals.dir_progress_update.connect(
+                        self.update_dir_progress
+                    )
+                    request_file_pool.start(request_file_worker)
 
     def construct_message_html(self, message: Message, is_self: bool):
         return f"""<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">
@@ -967,9 +1020,11 @@ class Ui_DrizzleMainWindow(QWidget):
         self.Files.addWidget(self.label)
 
         self.file_tree = QTreeWidget(self.centralwidget)
-        self.file_tree.itemClicked.connect(self.on_file_item_selected)
+        # self.file_tree.itemClicked.connect(self.on_file_item_selected)
+        self.file_tree.itemSelectionChanged.connect(self.on_file_item_selected)
         self.file_tree.header().setVisible(True)
         self.file_tree.headerItem().setText(0, "No user selected")
+        self.file_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
 
         self.Files.addWidget(self.file_tree)
 
@@ -994,7 +1049,7 @@ class Ui_DrizzleMainWindow(QWidget):
         self.btn_FileDownload = QPushButton(self.centralwidget)
         self.btn_FileDownload.setObjectName("pushButton_4")
         self.btn_FileDownload.setEnabled(True)
-        self.btn_FileDownload.clicked.connect(self.download_file)
+        self.btn_FileDownload.clicked.connect(self.download_files)
 
         self.horizontalLayout_2.addWidget(self.btn_FileDownload)
 
@@ -1096,173 +1151,40 @@ class Ui_DrizzleMainWindow(QWidget):
 
         self.verticalLayout.addWidget(self.label_12)
 
-        self.scrollArea = QScrollArea(self.centralwidget)
-        self.scrollArea.setObjectName("scrollArea")
-        sizePolicy5 = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.scroll_FileProgress = QScrollArea(self.centralwidget)
+        self.scroll_FileProgress.setObjectName("scrollArea")
+        sizePolicy5 = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
         sizePolicy5.setHorizontalStretch(0)
         sizePolicy5.setVerticalStretch(0)
-        sizePolicy5.setHeightForWidth(self.scrollArea.sizePolicy().hasHeightForWidth())
-        self.scrollArea.setSizePolicy(sizePolicy5)
-        self.scrollArea.setMaximumSize(QSize(16777215, 150))
-        self.scrollArea.setWidgetResizable(True)
-        self.scrollAreaWidgetContents = QWidget()
-        self.scrollAreaWidgetContents.setObjectName("scrollAreaWidgetContents")
-        self.scrollAreaWidgetContents.setGeometry(QRect(0, 0, 831, 328))
-        self.verticalLayout_5 = QVBoxLayout(self.scrollAreaWidgetContents)
-        self.verticalLayout_5.setObjectName("verticalLayout_5")
-        self.widget_6 = QWidget(self.scrollAreaWidgetContents)
-        self.widget_6.setObjectName("widget_6")
-        sizePolicy6 = QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        sizePolicy6.setHorizontalStretch(0)
-        sizePolicy6.setVerticalStretch(0)
-        sizePolicy6.setHeightForWidth(self.widget_6.sizePolicy().hasHeightForWidth())
-        self.widget_6.setSizePolicy(sizePolicy6)
-        self.widget_6.setMinimumSize(QSize(0, 40))
-        self.widget_6.setMaximumSize(QSize(16777215, 40))
-        self.horizontalLayout_8 = QHBoxLayout(self.widget_6)
-        self.horizontalLayout_8.setObjectName("horizontalLayout_8")
-        self.label_10 = QLabel(self.widget_6)
-        self.label_10.setObjectName("label_10")
+        sizePolicy5.setHeightForWidth(self.scroll_FileProgress.sizePolicy().hasHeightForWidth())
+        self.scroll_FileProgress.setSizePolicy(sizePolicy5)
+        # self.scroll_FileProgress.setMaximumSize(QSize(16777215, 250))
+        self.scroll_FileProgress.setMinimumSize(QSize(0, 150))
+        self.scroll_FileProgress.setWidgetResizable(True)
+        self.scrollContents_FileProgress = QWidget()
+        self.scrollContents_FileProgress.setObjectName("scrollAreaWidgetContents")
+        self.scrollContents_FileProgress.setGeometry(QRect(0, 0, 831, 328))
+        self.vBoxLayout_ScrollContents = QVBoxLayout(self.scrollContents_FileProgress)
+        self.vBoxLayout_ScrollContents.setObjectName("verticalLayout_5")
+        self.vBoxLayout_ScrollContents.setAlignment(Qt.AlignTop)
 
-        self.horizontalLayout_8.addWidget(self.label_10)
+        # self.widget_6 = QWidget(self.scrollContents_FileProgress)
+        # self.widget_6.setObjectName("widget_6")
+        # sizePolicy6 = QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        # sizePolicy6.setHorizontalStretch(0)
+        # sizePolicy6.setVerticalStretch(0)
+        # sizePolicy6.setHeightForWidth(self.widget_6.sizePolicy().hasHeightForWidth())
+        # self.widget_6.setSizePolicy(sizePolicy6)
+        # self.widget_6.setMinimumSize(QSize(0, 40))
+        # self.widget_6.setMaximumSize(QSize(16777215, 40))
+        # self.horizontalLayout_8 = QHBoxLayout(self.widget_6)
+        # self.horizontalLayout_8.setObjectName("horizontalLayout_8")
+        # self.label_10 = QLabel(self.widget_6)
+        # self.label_10.setObjectName("label_10")
 
-        self.progressBar_6 = QProgressBar(self.widget_6)
-        self.progressBar_6.setObjectName("progressBar_6")
-        self.progressBar_6.setValue(24)
+        self.scroll_FileProgress.setWidget(self.scrollContents_FileProgress)
 
-        self.horizontalLayout_8.addWidget(self.progressBar_6)
-
-        self.verticalLayout_5.addWidget(self.widget_6)
-
-        self.widget_3 = QWidget(self.scrollAreaWidgetContents)
-        self.widget_3.setObjectName("widget_3")
-        sizePolicy6.setHeightForWidth(self.widget_3.sizePolicy().hasHeightForWidth())
-        self.widget_3.setSizePolicy(sizePolicy6)
-        self.widget_3.setMinimumSize(QSize(0, 40))
-        self.widget_3.setMaximumSize(QSize(16777215, 40))
-        self.horizontalLayout_5 = QHBoxLayout(self.widget_3)
-        self.horizontalLayout_5.setObjectName("horizontalLayout_5")
-        self.label_7 = QLabel(self.widget_3)
-        self.label_7.setObjectName("label_7")
-
-        self.horizontalLayout_5.addWidget(self.label_7)
-
-        self.progressBar_3 = QProgressBar(self.widget_3)
-        self.progressBar_3.setObjectName("progressBar_3")
-        self.progressBar_3.setValue(24)
-
-        self.horizontalLayout_5.addWidget(self.progressBar_3)
-
-        self.verticalLayout_5.addWidget(self.widget_3)
-
-        self.widget_4 = QWidget(self.scrollAreaWidgetContents)
-        self.widget_4.setObjectName("widget_4")
-        sizePolicy6.setHeightForWidth(self.widget_4.sizePolicy().hasHeightForWidth())
-        self.widget_4.setSizePolicy(sizePolicy6)
-        self.widget_4.setMinimumSize(QSize(0, 40))
-        self.widget_4.setMaximumSize(QSize(16777215, 40))
-        self.horizontalLayout_6 = QHBoxLayout(self.widget_4)
-        self.horizontalLayout_6.setObjectName("horizontalLayout_6")
-        self.label_8 = QLabel(self.widget_4)
-        self.label_8.setObjectName("label_8")
-
-        self.horizontalLayout_6.addWidget(self.label_8)
-
-        self.progressBar_4 = QProgressBar(self.widget_4)
-        self.progressBar_4.setObjectName("progressBar_4")
-        self.progressBar_4.setValue(24)
-
-        self.horizontalLayout_6.addWidget(self.progressBar_4)
-
-        self.verticalLayout_5.addWidget(self.widget_4)
-
-        self.widget = QWidget(self.scrollAreaWidgetContents)
-        self.widget.setObjectName("widget")
-        sizePolicy6.setHeightForWidth(self.widget.sizePolicy().hasHeightForWidth())
-        self.widget.setSizePolicy(sizePolicy6)
-        self.widget.setMinimumSize(QSize(0, 40))
-        self.widget.setMaximumSize(QSize(16777215, 40))
-        self.horizontalLayout_3 = QHBoxLayout(self.widget)
-        self.horizontalLayout_3.setObjectName("horizontalLayout_3")
-        self.label_5 = QLabel(self.widget)
-        self.label_5.setObjectName("label_5")
-
-        self.horizontalLayout_3.addWidget(self.label_5)
-
-        self.progressBar = QProgressBar(self.widget)
-        self.progressBar.setObjectName("progressBar")
-        self.progressBar.setValue(24)
-
-        self.horizontalLayout_3.addWidget(self.progressBar)
-
-        self.verticalLayout_5.addWidget(self.widget, 0, Qt.AlignTop)
-
-        self.widget_5 = QWidget(self.scrollAreaWidgetContents)
-        self.widget_5.setObjectName("widget_5")
-        sizePolicy6.setHeightForWidth(self.widget_5.sizePolicy().hasHeightForWidth())
-        self.widget_5.setSizePolicy(sizePolicy6)
-        self.widget_5.setMinimumSize(QSize(0, 40))
-        self.widget_5.setMaximumSize(QSize(16777215, 40))
-        self.horizontalLayout_7 = QHBoxLayout(self.widget_5)
-        self.horizontalLayout_7.setObjectName("horizontalLayout_7")
-        self.label_9 = QLabel(self.widget_5)
-        self.label_9.setObjectName("label_9")
-
-        self.horizontalLayout_7.addWidget(self.label_9)
-
-        self.progressBar_5 = QProgressBar(self.widget_5)
-        self.progressBar_5.setObjectName("progressBar_5")
-        self.progressBar_5.setValue(24)
-
-        self.horizontalLayout_7.addWidget(self.progressBar_5)
-
-        self.verticalLayout_5.addWidget(self.widget_5)
-
-        self.widget_2 = QWidget(self.scrollAreaWidgetContents)
-        self.widget_2.setObjectName("widget_2")
-        sizePolicy6.setHeightForWidth(self.widget_2.sizePolicy().hasHeightForWidth())
-        self.widget_2.setSizePolicy(sizePolicy6)
-        self.widget_2.setMinimumSize(QSize(0, 40))
-        self.widget_2.setMaximumSize(QSize(16777215, 40))
-        self.horizontalLayout_4 = QHBoxLayout(self.widget_2)
-        self.horizontalLayout_4.setObjectName("horizontalLayout_4")
-        self.label_6 = QLabel(self.widget_2)
-        self.label_6.setObjectName("label_6")
-
-        self.horizontalLayout_4.addWidget(self.label_6)
-
-        self.progressBar_2 = QProgressBar(self.widget_2)
-        self.progressBar_2.setObjectName("progressBar_2")
-        self.progressBar_2.setValue(24)
-
-        self.horizontalLayout_4.addWidget(self.progressBar_2)
-
-        self.verticalLayout_5.addWidget(self.widget_2)
-
-        self.widget_7 = QWidget(self.scrollAreaWidgetContents)
-        self.widget_7.setObjectName("widget_7")
-        sizePolicy6.setHeightForWidth(self.widget_7.sizePolicy().hasHeightForWidth())
-        self.widget_7.setSizePolicy(sizePolicy6)
-        self.widget_7.setMinimumSize(QSize(0, 40))
-        self.widget_7.setMaximumSize(QSize(16777215, 40))
-        self.horizontalLayout_9 = QHBoxLayout(self.widget_7)
-        self.horizontalLayout_9.setObjectName("horizontalLayout_9")
-        self.label_11 = QLabel(self.widget_7)
-        self.label_11.setObjectName("label_11")
-
-        self.horizontalLayout_9.addWidget(self.label_11)
-
-        self.progressBar_7 = QProgressBar(self.widget_7)
-        self.progressBar_7.setObjectName("progressBar_7")
-        self.progressBar_7.setValue(24)
-
-        self.horizontalLayout_9.addWidget(self.progressBar_7)
-
-        self.verticalLayout_5.addWidget(self.widget_7, 0, Qt.AlignTop)
-
-        self.scrollArea.setWidget(self.scrollAreaWidgetContents)
-
-        self.verticalLayout.addWidget(self.scrollArea)
+        self.verticalLayout.addWidget(self.scroll_FileProgress)
 
         self.verticalLayout_4.addLayout(self.verticalLayout)
 
@@ -1308,13 +1230,6 @@ class Ui_DrizzleMainWindow(QWidget):
         self.btn_SendMessage.setText(QCoreApplication.translate("MainWindow", "Send Message", None))
         self.btn_SendFile.setText(QCoreApplication.translate("MainWindow", "Send File", None))
         self.label_12.setText(QCoreApplication.translate("MainWindow", "Downloading:", None))
-        self.label_10.setText(QCoreApplication.translate("MainWindow", "TextLabel", None))
-        self.label_7.setText(QCoreApplication.translate("MainWindow", "TextLabel", None))
-        self.label_8.setText(QCoreApplication.translate("MainWindow", "TextLabel", None))
-        self.label_5.setText(QCoreApplication.translate("MainWindow", "TextLabel", None))
-        self.label_9.setText(QCoreApplication.translate("MainWindow", "TextLabel", None))
-        self.label_6.setText(QCoreApplication.translate("MainWindow", "TextLabel", None))
-        self.label_11.setText(QCoreApplication.translate("MainWindow", "TextLabel", None))
 
     def open_settings(self, MainWindow):
         settings_dialog = QDialog(MainWindow)
@@ -1322,18 +1237,19 @@ class Ui_DrizzleMainWindow(QWidget):
         settings_dialog.exec()
 
     def open_file_info(self, MainWindow):
-        global selected_file_item
+        global selected_file_items
         global selected_uname
-        size = selected_file_item["size"]
+        selected_item = selected_file_items[0]
+        size = selected_item["size"]
         filedata = {
-            "name": selected_file_item["name"],
-            "hash": selected_file_item["hash"] or "Not available",
-            "type": selected_file_item["type"],
+            "name": selected_item["name"],
+            "hash": selected_item["hash"] or "Not available",
+            "type": selected_item["type"],
             "size": convert_size(size or 0),
             "owner": selected_uname,
         }
-        if selected_file_item["type"] != "file":
-            size, count = get_directory_size(selected_file_item, 0, 0)
+        if selected_item["type"] != "file":
+            size, count = get_directory_size(selected_item, 0, 0)
             filedata["size"] = convert_size(size)
             filedata["count"] = f"{count} files"
         file_info_dialog = QDialog(MainWindow)
@@ -1379,3 +1295,27 @@ class Ui_DrizzleMainWindow(QWidget):
         self.send_file_thread.finished.connect(self.send_file_thread.deleteLater)
 
         self.send_file_thread.start()
+
+    def new_file_progress(self, path: Path):
+        logging.debug("New file progress")
+        global progress_widgets
+        file_progress_widget = QWidget(self.scrollContents_FileProgress)
+        file_progress_widget.ui = Ui_FileProgressWidget(file_progress_widget, path)
+        self.vBoxLayout_ScrollContents.addWidget(file_progress_widget)
+        progress_widgets[path] = file_progress_widget
+
+    def update_file_progress(self, path: Path):
+        global transfer_progress
+        global progress_widgets
+        progress_widgets[path].ui.update_progress(transfer_progress[path]["percent_progress"])
+
+    def update_dir_progress(self, progress_data: tuple[Path, int]):
+        global dir_progress
+        global progress_widgets
+        path, increment = progress_data
+        dir_progress[path]["mutex"].lock()
+        dir_progress[path]["current"] += increment
+        progress_widgets[path].ui.update_progress(
+            100 * dir_progress[path]["current"] / dir_progress[path]["total"]
+        )
+        dir_progress[path]["mutex"].unlock()

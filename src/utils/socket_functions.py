@@ -64,7 +64,7 @@ def recvall(peer_socket: socket.socket, length: int) -> bytes:
 
 
 def update_share_data(share_folder_path: Path, client_send_socket: socket.socket):
-    share_data = msgpack.packb(path_to_dict(share_folder_path)["children"])
+    share_data = msgpack.packb(path_to_dict(share_folder_path, str(share_folder_path))["children"])
     share_data_header = f"{HeaderCode.SHARE_DATA.value}{len(share_data):<{HEADER_MSG_LEN}}".encode(
         FMT
     )

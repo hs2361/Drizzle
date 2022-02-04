@@ -10,7 +10,7 @@ from utils.constants import (  # MESSAGE_MAX_LEN,
     SHARE_FOLDER_PATH,
     TEMP_FOLDER_PATH,
 )
-from utils.types import CompressionMethod, DirData, FileMetadata, TransferProgress, TransferStatus
+from utils.types import CompressionMethod, DirData, TransferProgress, TransferStatus
 
 # from prompt_toolkit.validation import ValidationError, Validator
 
@@ -36,9 +36,9 @@ def generate_transfer_progress() -> dict[Path, TransferProgress]:
     return transfer_progress
 
 
-def path_to_dict(path: Path) -> DirData:
+def path_to_dict(path: Path, share_folder_path: str) -> DirData:
     d: DirData = {
-        "path": str(path).removeprefix(str(SHARE_FOLDER_PATH) + "/"),
+        "path": str(path).removeprefix(share_folder_path + "/"),
         "name": path.name,
         "hash": None,
         "compression": CompressionMethod.NONE.value,
@@ -48,7 +48,7 @@ def path_to_dict(path: Path) -> DirData:
     }
     if path.is_dir():
         d["type"] = "directory"
-        d["children"] = [path_to_dict(item) for item in path.iterdir()]
+        d["children"] = [path_to_dict(item, share_folder_path) for item in path.iterdir()]
     else:
         d["type"] = "file"
         d["size"] = Path(path).stat().st_size
@@ -111,32 +111,30 @@ def get_file_hash(filepath: str) -> str:
     return hash.hexdigest()
 
 
-def get_sharable_files() -> list[FileMetadata]:
-    shareable_files: list[FileMetadata] = []
-    for (root, _, files) in os.walk(str(SHARE_FOLDER_PATH)):
-        for f in files:
-            fname = Path(root).joinpath(f)
-            shareable_files.append(
-                {
-                    "path": str(fname),
-                    "size": fname.stat().st_size,
-                    "hash": None,
-                    "compression": CompressionMethod.NONE,
-                }
-            )
-    return shareable_files
-
-
-def get_unique_filename(path: Path) -> Path:
-    filename, extension = path.stem, path.suffix
+def get_unique_filename(path: Path, downloads_folder_path: Path) -> Path:
+    parent, filename, extension = path.parent, path.stem, path.suffix
     counter = 1
-
+    logging.debug(f"parent: {parent}")
+    # if parent == downloads_folder_path:
+    logging.debug(f"making unique file for {path}")
     while path.exists():
-        path = RECV_FOLDER_PATH / Path(filename + "_" + str(counter) + extension)
+        path = parent / Path(filename + "_" + str(counter) + extension)
         counter += 1
 
     logging.debug(f"unique file name is {path}")
     return path
+    # else:
+    #     logging.debug(f"making unique folder for {path}")
+    #     folder_structure = path.relative_to(downloads_folder_path)
+    #     logging.debug(list(folder_structure.parents))
+    #     first_folder = folder_structure.parents[-2]
+    #     suffix = str(path).removeprefix(str(downloads_folder_path / first_folder) + "/")
+    #     while (downloads_folder_path / first_folder).exists():
+    #         first_folder = Path(str(first_folder) + "_" + str(counter))
+    #         counter += 1
+    #     path = downloads_folder_path / first_folder / suffix
+    #     logging.debug(f"unique folder name is {path}")
+    #     return path
 
 
 def get_pending_downloads(transfer_progress: dict[Path, TransferProgress]) -> str:
