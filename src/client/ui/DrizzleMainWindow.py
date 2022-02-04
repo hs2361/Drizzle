@@ -85,6 +85,8 @@ progress_widgets: dict[Path, Ui_FileProgressWidget] = {}
 dir_progress: dict[Path, DirProgress] = {}
 user_settings: UserSettings = {}
 
+server_socket_mutex = QMutex()
+
 
 class HeartbeatWorker(QObject):
     update_status = pyqtSignal(dict)
@@ -95,17 +97,20 @@ class HeartbeatWorker(QObject):
 
     def run(self):
         global client_send_socket
+        global server_socket_mutex
         heartbeat = HeaderCode.HEARTBEAT_REQUEST.value.encode(FMT)
         while True:
             time.sleep(HEARTBEAT_TIMER)
+            server_socket_mutex.lock()
             client_send_socket.send(heartbeat)
             type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
-
             if type == HeaderCode.HEARTBEAT_REQUEST.value:
                 length = int(client_send_socket.recv((HEADER_MSG_LEN)).decode(FMT))
                 new_status = msgpack.unpackb(client_send_socket.recv(length))
+                server_socket_mutex.unlock()
                 self.update_status.emit(new_status)
             else:
+                server_socket_mutex.unlock()
                 logging.error(
                     f"Server sent invalid message type in header: {type}",
                 )
@@ -183,7 +188,9 @@ class HandleFileRequestWorker(QRunnable):
                 update_hash_header = f"{HeaderCode.UPDATE_HASH.value}{len(update_hash_bytes):<{HEADER_MSG_LEN}}".encode(
                     FMT
                 )
+                server_socket_mutex.lock()
                 client_send_socket.send(update_hash_header + update_hash_bytes)
+                server_socket_mutex.unlock()
         except Exception as e:
             logging.error(f"File Sending failed: {e}", exc_info=True)
 
@@ -281,7 +288,9 @@ class ReceiveHandler(QObject):
                         share_data_header = f"{HeaderCode.SHARE_DATA.value}{len(share_data):<{HEADER_MSG_LEN}}".encode(
                             FMT
                         )
+                        server_socket_mutex.lock()
                         client_send_socket.sendall(share_data_header + share_data)
+                        server_socket_mutex.unlock()
                         raise RequestException(
                             f"Requested file {file_req_header['filepath']} is not available",
                             ExceptionCode.NOT_FOUND,
@@ -313,8 +322,10 @@ class ReceiveHandler(QObject):
                             FMT
                         )
                         logging.debug(msg=f"Sending packet {(header + lookup).decode(FMT)}")
+                        server_socket_mutex.lock()
                         client_send_socket.send(header + lookup)
                         res_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
+                        server_socket_mutex.unlock()
                         if res_type not in [
                             HeaderCode.REQUEST_UNAME.value,
                             HeaderCode.ERROR.value,
@@ -324,10 +335,12 @@ class ReceiveHandler(QObject):
                                 code=ExceptionCode.INVALID_HEADER,
                             )
                         else:
+                            server_socket_mutex.lock()
                             response_length = int(
                                 client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip()
                             )
                             response = client_send_socket.recv(response_length)
+                            server_socket_mutex.unlock()
                             if res_type == HeaderCode.REQUEST_UNAME.value:
                                 username = response.decode(FMT)
                                 print(f"\nUser {username} is trying to send a message")
@@ -369,9 +382,13 @@ class SendFileWorker(QObject):
     completed = pyqtSignal()
 
     def __init__(self, filepath: Path):
+        global client_send_socket
+        global server_socket_mutex
         super().__init__()
         self.filepath = filepath
+        server_socket_mutex.lock()
         peer_ip = request_ip(selected_uname, client_send_socket)
+        server_socket_mutex.unlock()
         if peer_ip is not None:
             self.client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.client_peer_socket.connect((peer_ip, CLIENT_RECV_PORT))
@@ -697,7 +714,9 @@ class Ui_DrizzleMainWindow(QWidget):
 
         if self.txtedit_MessageInput.toPlainText() == "":
             return
+        server_socket_mutex.lock()
         peer_ip = request_ip(selected_uname, client_send_socket)
+        server_socket_mutex.unlock()
         client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client_peer_socket.connect((peer_ip, CLIENT_RECV_PORT))
         if peer_ip is not None:
@@ -777,11 +796,14 @@ class Ui_DrizzleMainWindow(QWidget):
         global client_send_socket
         global transfer_progress
         global selected_file_items
+        global server_socket_mutex
 
         request_file_pool = QThreadPool.globalInstance()
 
         for selected_item in selected_file_items:
+            server_socket_mutex.lock()
             peer_ip = request_ip(selected_uname, client_send_socket)
+            server_socket_mutex.unlock()
             if peer_ip is None:
                 logging.error(f"Selected user {selected_uname} does not exist")
                 return
@@ -905,6 +927,8 @@ class Ui_DrizzleMainWindow(QWidget):
 
     def on_user_selected(self):
         global selected_uname
+        global server_socket_mutex
+
         items = self.lw_OnlineStatus.selectedItems()
         if len(items):
             item = items[0]
@@ -927,6 +951,7 @@ class Ui_DrizzleMainWindow(QWidget):
                     FMT
                 )
             )
+            server_socket_mutex.lock()
             client_send_socket.send(search_header + searchquery_bytes)
             response_header_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
             if response_header_type == HeaderCode.FILE_SEARCH.value:
@@ -934,6 +959,7 @@ class Ui_DrizzleMainWindow(QWidget):
                 browse_files: list[DBData] = msgpack.unpackb(
                     recvall(client_send_socket, response_len),
                 )
+                server_socket_mutex.unlock()
                 if len(browse_files):
                     self.file_tree.clear()
                     self.file_tree.headerItem().setText(0, username)
@@ -941,6 +967,7 @@ class Ui_DrizzleMainWindow(QWidget):
                 else:
                     print("No files found")
             else:
+                server_socket_mutex.unlock()
                 logging.error(f"Error occured while searching for files, {response_header_type}")
                 error_dialog = QDialog()
                 error_dialog.ui = Ui_ErrorDialog(
@@ -1257,6 +1284,7 @@ class Ui_DrizzleMainWindow(QWidget):
         file_info_dialog.exec()
 
     def import_files(self):
+        global server_socket_mutex
         files, _ = QFileDialog.getOpenFileNames(
             self, "Import Files", str(Path.home()), "All Files (*)"
         )
@@ -1266,7 +1294,9 @@ class Ui_DrizzleMainWindow(QWidget):
             )
             if imported is not None:
                 print(f"Imported file {imported}")
+        server_socket_mutex.lock()
         update_share_data(Path(self.user_settings["share_folder_path"]), client_send_socket)
+        server_socket_mutex.unlock()
 
     def import_folder(self):
         dir = QFileDialog.getExistingDirectory(
@@ -1277,7 +1307,9 @@ class Ui_DrizzleMainWindow(QWidget):
         imported = import_file_to_share(Path(dir), Path(self.user_settings["share_folder_path"]))
         if imported is not None:
             print(f"Imported file {imported}")
+        server_socket_mutex.lock()
         update_share_data(Path(self.user_settings["share_folder_path"]), client_send_socket)
+        server_socket_mutex.unlock()
 
     def share_file(self):
         filepath, _ = QFileDialog.getOpenFileName(
