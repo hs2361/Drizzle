@@ -450,7 +450,7 @@ class SendFileWorker(QObject):
 
 
 class RequestFileSignals(QObject):
-    receiving_new_file = pyqtSignal(Path)
+    receiving_new_file = pyqtSignal(tuple)
     file_progress_update = pyqtSignal(Path)
     dir_progress_update = pyqtSignal(tuple)
 
@@ -549,7 +549,9 @@ class RequestFileWorker(QRunnable):
                                         ] = TransferStatus.DOWNLOADING
                                     if offset == 0:
                                         if self.parent_dir is None:
-                                            self.worker_signals.receiving_new_file.emit(temp_path)
+                                            self.worker_signals.receiving_new_file.emit(
+                                                (temp_path, file_header["size"])
+                                            )
                                     while True:
                                         if (
                                             transfer_progress[temp_path]["status"]
@@ -861,7 +863,7 @@ class Ui_DrizzleMainWindow(QWidget):
                     "status": TransferStatus.DOWNLOADING,
                     "mutex": ServerMutex(),
                 }
-                self.new_file_progress(dir_path)
+                self.new_file_progress((dir_path, dir_progress[dir_path]["total"]))
                 for f in files_to_request:
                     transfer_progress[TEMP_FOLDER_PATH / selected_uname / f["path"]] = {
                         "progress": 0,
@@ -1354,18 +1356,17 @@ class Ui_DrizzleMainWindow(QWidget):
 
         self.send_file_thread.start()
 
-    def new_file_progress(self, path: Path):
-        logging.debug(msg="New file progress")
+    def new_file_progress(self, data: tuple[Path, int]):
         global progress_widgets
         file_progress_widget = QWidget(self.scrollContents_FileProgress)
-        file_progress_widget.ui = Ui_FileProgressWidget(file_progress_widget, path)
+        file_progress_widget.ui = Ui_FileProgressWidget(file_progress_widget, data[0], data[1])
         self.vBoxLayout_ScrollContents.addWidget(file_progress_widget)
-        progress_widgets[path] = file_progress_widget
+        progress_widgets[data[0]] = file_progress_widget
 
     def update_file_progress(self, path: Path):
         global transfer_progress
         global progress_widgets
-        progress_widgets[path].ui.update_progress(transfer_progress[path]["percent_progress"])
+        progress_widgets[path].ui.update_progress(transfer_progress[path]["progress"])
 
     def update_dir_progress(self, progress_data: tuple[Path, int]):
         global dir_progress
@@ -1373,7 +1374,5 @@ class Ui_DrizzleMainWindow(QWidget):
         path, increment = progress_data
         dir_progress[path]["mutex"].lock("update dir progress")
         dir_progress[path]["current"] += increment
-        progress_widgets[path].ui.update_progress(
-            100 * dir_progress[path]["current"] / dir_progress[path]["total"]
-        )
+        progress_widgets[path].ui.update_progress(dir_progress[path]["current"])
         dir_progress[path]["mutex"].unlock("update dir progress")

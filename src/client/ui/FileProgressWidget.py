@@ -6,21 +6,24 @@ from PyQt5.QtGui import *
 from PyQt5.QtWidgets import *
 
 sys.path.append("../")
+from utils.helpers import convert_size
 
 
 class Ui_FileProgressWidget(QWidget):
-    def __init__(self, Widget, item_path: Path):
+    def __init__(self, Widget, item_path: Path, total: int):
         super(Ui_FileProgressWidget, self).__init__()
         self.path = item_path
-        self.setupUi(Widget)
+        self.total = convert_size(total)
+        self.setupUi(Widget, total)
 
     def update_progress(self, new_val: float):
-        self.progressBar.setValue(int(new_val))
+        converted_size = convert_size(round(new_val))
+        self.progressBar.setFormat(f"{converted_size}/{self.total}")
+        self.progressBar.setValue(round(new_val))
 
-    def setupUi(self, Widget):
+    def setupUi(self, Widget, total: int):
         if not Widget.objectName():
             Widget.setObjectName("Form")
-        # Widget.resize(648, 50)
         sizePolicy = QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
@@ -49,6 +52,7 @@ class Ui_FileProgressWidget(QWidget):
         self.horizontalLayout_2.addWidget(self.label)
 
         self.progressBar = QProgressBar(Widget)
+        self.progressBar.setMaximum(total)
         self.progressBar.setObjectName("progressBar")
 
         self.horizontalLayout_2.addWidget(self.progressBar)
