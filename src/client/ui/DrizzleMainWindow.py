@@ -107,11 +107,11 @@ class ServerMutex(QMutex):
         super().__init__()
 
     def lock(self, caller: str) -> None:
-        logging.debug(msg=f"Mutex locked by {caller}")
+        # logging.debug(msg=f"Mutex locked by {caller}")
         return super().lock()
 
     def unlock(self, caller: str) -> None:
-        logging.debug(msg=f"Mutex unlocked by {caller}")
+        # logging.debug(msg=f"Mutex unlocked by {caller}")
         return super().unlock()
 
 
@@ -354,8 +354,8 @@ class ReceiveHandler(QObject):
                             peer_uname = request_uname(peer_addr[0], client_send_socket)
                             server_socket_mutex.unlock("receive handler request uname")
                             if peer_uname is not None:
-                                connected.append(peer_socket)
                                 ip_to_uname[peer_addr[0]] = peer_uname
+                        connected.append(peer_socket)
                     except Exception as e:
                         logging.error(msg=e, exc_info=True)
                         break
@@ -859,7 +859,7 @@ class Ui_DrizzleMainWindow(QWidget):
                     "current": 0,
                     "total": get_directory_size(selected_item, 0, 0)[0],
                     "status": TransferStatus.DOWNLOADING,
-                    "mutex": QMutex(),
+                    "mutex": ServerMutex(),
                 }
                 self.new_file_progress(dir_path)
                 for f in files_to_request:
