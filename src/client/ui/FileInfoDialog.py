@@ -1,16 +1,17 @@
-# -*- coding: utf-8 -*-
-
-################################################################################
-## Form generated from reading UI file 'FileInfoDialog.ui'
-##
-## Created by: Qt User Interface Compiler version 5.15.2
-##
-## WARNING! All changes made in this file will be lost when recompiling UI file!
-################################################################################
-
-from PyQt5.QtCore import *
-from PyQt5.QtGui import *
-from PyQt5.QtWidgets import *
+from PyQt5.QtCore import QCoreApplication, QMetaObject, QSize, Qt
+from PyQt5.QtGui import QFont
+from PyQt5.QtWidgets import (
+    QDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLayout,
+    QPushButton,
+    QSizePolicy,
+    QSpacerItem,
+    QTextBrowser,
+    QVBoxLayout,
+)
 
 
 class Ui_FileInfoDialog(QDialog):

@@ -4,24 +4,8 @@ import math
 import os
 from pathlib import Path
 
-from utils.constants import (  # MESSAGE_MAX_LEN,
-    HASH_BUFFER_LEN,
-    RECV_FOLDER_PATH,
-    SHARE_FOLDER_PATH,
-    TEMP_FOLDER_PATH,
-)
-from utils.types import CompressionMethod, DirData, TransferProgress, TransferStatus
-
-# from prompt_toolkit.validation import ValidationError, Validator
-
-
-# class MessageLenValidator(Validator):
-#     def validate(self, document) -> None:
-#         text = document.text
-#         if len(text) > MESSAGE_MAX_LEN:
-#             raise ValidationError(
-#                 message=f"Message is too long. Limit to {MESSAGE_MAX_LEN} characters"
-#             )
+from utils.constants import HASH_BUFFER_LEN, TEMP_FOLDER_PATH  # MESSAGE_MAX_LEN,
+from utils.types import CompressionMethod, DirData, Message, TransferProgress, TransferStatus
 
 
 def generate_transfer_progress() -> dict[Path, TransferProgress]:
@@ -111,11 +95,10 @@ def get_file_hash(filepath: str) -> str:
     return hash.hexdigest()
 
 
-def get_unique_filename(path: Path, downloads_folder_path: Path) -> Path:
+def get_unique_filename(path: Path) -> Path:
     parent, filename, extension = path.parent, path.stem, path.suffix
     counter = 1
     logging.debug(f"parent: {parent}")
-    # if parent == downloads_folder_path:
     logging.debug(f"making unique file for {path}")
     while path.exists():
         path = parent / Path(filename + "_" + str(counter) + extension)
@@ -123,18 +106,6 @@ def get_unique_filename(path: Path, downloads_folder_path: Path) -> Path:
 
     logging.debug(f"unique file name is {path}")
     return path
-    # else:
-    #     logging.debug(f"making unique folder for {path}")
-    #     folder_structure = path.relative_to(downloads_folder_path)
-    #     logging.debug(list(folder_structure.parents))
-    #     first_folder = folder_structure.parents[-2]
-    #     suffix = str(path).removeprefix(str(downloads_folder_path / first_folder) + "/")
-    #     while (downloads_folder_path / first_folder).exists():
-    #         first_folder = Path(str(first_folder) + "_" + str(counter))
-    #         counter += 1
-    #     path = downloads_folder_path / first_folder / suffix
-    #     logging.debug(f"unique folder name is {path}")
-    #     return path
 
 
 def get_pending_downloads(transfer_progress: dict[Path, TransferProgress]) -> str:
@@ -174,6 +145,14 @@ def import_file_to_share(file_path: Path, share_folder_path: Path) -> Path | Non
     else:
         logging.error(f"Attempted to import file {str(file_path)} that does not exist")
         return None
+
+
+def construct_message_html(message: Message, is_self: bool):
+    return f"""<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">
+<span style=" font-weight:600; color:{'#1a5fb4' if is_self else '#e5a50a'};">{"You" if is_self else message["sender"]}: </span>
+{message["content"]}
+</p>
+"""
 
 
 def convert_size(size_bytes: int) -> str:

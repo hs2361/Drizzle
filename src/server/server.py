@@ -71,9 +71,9 @@ def receive_msg(client_socket: socket.socket) -> SocketMessage:
     else:
         message_len = int(client_socket.recv(HEADER_MSG_LEN).decode(FMT))
         query = recvall(client_socket, message_len)
-        logging.debug(
-            msg=f"Received packet: TYPE {message_type} LEN {message_len} from {client_socket.getpeername()}"
-        )
+        # logging.debug(
+        #     msg=f"Received packet: TYPE {message_type} LEN {message_len} from {client_socket.getpeername()}"
+        # )
         return {"type": HeaderCode(message_type), "query": query}
 
 

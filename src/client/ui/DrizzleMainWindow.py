@@ -9,9 +9,41 @@ import time
 from pathlib import Path
 
 import msgpack
-from PyQt5.QtCore import *
+from PyQt5.QtCore import (
+    QCoreApplication,
+    QMetaObject,
+    QMutex,
+    QObject,
+    QRect,
+    QRunnable,
+    QSize,
+    Qt,
+    QThread,
+    QThreadPool,
+    pyqtSignal,
+)
 from PyQt5.QtGui import QFont, QIcon
-from PyQt5.QtWidgets import *
+from PyQt5.QtWidgets import (
+    QAbstractItemView,
+    QDialog,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QLayout,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSpacerItem,
+    QTextEdit,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 from ui.ErrorDialog import Ui_ErrorDialog
 from ui.FileInfoDialog import Ui_FileInfoDialog
 from ui.FileProgressWidget import Ui_FileProgressWidget
@@ -34,6 +66,7 @@ from utils.constants import (
 )
 from utils.exceptions import ExceptionCode, RequestException
 from utils.helpers import (
+    construct_message_html,
     convert_size,
     get_directory_size,
     get_file_hash,
@@ -130,7 +163,6 @@ class HeartbeatWorker(QObject):
         global server_socket_mutex
         heartbeat = HeaderCode.HEARTBEAT_REQUEST.value.encode(FMT)
         while True:
-            time.sleep(HEARTBEAT_TIMER)
             server_socket_mutex.lock("heartbeat worker")
             client_send_socket.send(heartbeat)
             type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
@@ -139,6 +171,7 @@ class HeartbeatWorker(QObject):
                 new_status = msgpack.unpackb(client_send_socket.recv(length))
                 server_socket_mutex.unlock("heartbeat worker")
                 self.update_status.emit(new_status)
+                time.sleep(HEARTBEAT_TIMER)
             else:
                 server_socket_mutex.unlock("heartbeat worker")
                 logging.error(
@@ -167,15 +200,7 @@ class HandleFileRequestWorker(QRunnable):
         file_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
         file_send_socket.connect(self.requester)
         hash = ""
-        # compression = CompressionMethod.NONE
 
-        # file_size = filepath.stat().st_size
-        # if file_size < COMPRESSION_THRESHOLD:
-        #     compression = CompressionMethod.ZSTD
-        #     compressor = zstd.ZstdCompressor()
-        #     with filepath.open(mode="rb") as uncompressed_file:
-        #         with compressor.stream_writer(uncompressed_file) as writer:
-        #             pass
         if self.request_hash:
             hash = get_file_hash(str(self.filepath))
 
@@ -183,30 +208,26 @@ class HandleFileRequestWorker(QRunnable):
             "path": str(self.filepath).removeprefix(user_settings["share_folder_path"] + "/"),
             "size": self.filepath.stat().st_size,
             "hash": hash if self.request_hash else None,
-            # "compression": compression,
         }
 
         logging.debug(filemetadata)
         filemetadata_bytes = msgpack.packb(filemetadata)
-        # logging.debug(filemetadata_bytes)
         filesend_header = (
             f"{HeaderCode.FILE.value}{len(filemetadata_bytes):<{HEADER_MSG_LEN}}".encode(FMT)
         )
 
         try:
-            file_to_send = self.filepath.open(mode="rb")
-            logging.debug(f"Sending file {filemetadata['path']} to {self.requester}")
-            file_send_socket.send(filesend_header + filemetadata_bytes)
+            with self.filepath.open(mode="rb") as file_to_send:
+                logging.debug(f"Sending file {filemetadata['path']} to {self.requester}")
+                file_send_socket.send(filesend_header + filemetadata_bytes)
 
-            total_bytes_read = 0
-            file_to_send.seek(self.resume_offset)
-            while total_bytes_read != filemetadata["size"] - self.resume_offset:
-                bytes_read = file_to_send.read(FILE_BUFFER_LEN)
-                num_bytes = file_send_socket.send(bytes_read)
-                total_bytes_read += num_bytes
+                total_bytes_read = 0
+                file_to_send.seek(self.resume_offset)
+                while total_bytes_read != filemetadata["size"] - self.resume_offset:
+                    bytes_read = file_to_send.read(FILE_BUFFER_LEN)
+                    num_bytes = file_send_socket.send(bytes_read)
+                    total_bytes_read += num_bytes
                 print("\nFile Sent")
-            file_to_send.close()
-            file_send_socket.close()
             if self.request_hash:
                 update_hash_params: UpdateHashParams = {
                     "filepath": str(self.filepath).removeprefix(
@@ -222,14 +243,17 @@ class HandleFileRequestWorker(QRunnable):
                 client_send_socket.send(update_hash_header + update_hash_bytes)
                 server_socket_mutex.unlock("handle file request worker")
         except Exception as e:
-            logging.error(f"File Sending failed: {e}", exc_info=True)
+            logging.exception(f"File Sending failed: {e}")
+        finally:
+            file_send_socket.close()
 
 
 class ReceiveHandler(QObject):
     message_received = pyqtSignal(dict)
     file_received = pyqtSignal(dict)
+    send_file_pool = QThreadPool.globalInstance()
 
-    def receive_msg(self, socket: socket.socket) -> str:
+    def receive_msg(self, socket: socket.socket) -> str | None:
         global client_send_socket
         global user_settings
         logging.debug(f"Receiving from {socket.getpeername()}")
@@ -256,7 +280,6 @@ class ReceiveHandler(QObject):
                     logging.debug(msg=f"receiving file with metadata {file_header}")
                     write_path: Path = get_unique_filename(
                         Path(user_settings["downloads_folder_path"]) / file_header["path"],
-                        Path(user_settings["downloads_folder_path"]),
                     )
                     try:
                         file_to_write = open(str(write_path), "wb")
@@ -272,10 +295,10 @@ class ReceiveHandler(QObject):
                             return f"Received file {write_path.name}"
                         except Exception as e:
                             logging.error(e)
-                            return "File received but failed to save"
+                            return None
                     except Exception as e:
                         logging.error(e)
-                        return "Unable to write file"
+                        return None
                 case HeaderCode.FILE_REQUEST.value:
                     req_header_len = int(socket.recv(HEADER_MSG_LEN).decode(FMT))
                     file_req_header: FileRequest = msgpack.unpackb(socket.recv(req_header_len))
@@ -285,25 +308,15 @@ class ReceiveHandler(QObject):
                     )
                     if requested_file_path.is_file():
                         socket.send(HeaderCode.FILE_REQUEST.value.encode(FMT))
-                        # send_file_thread = threading.Thread(
-                        #     target=self.send_file,
-                        #     args=(
-                        #         requested_file_path,
-                        #         (socket.getpeername()[0], file_req_header["port"]),
-                        #         file_req_header["request_hash"],
-                        #         file_req_header["resume_offset"],
-                        #     ),
-                        # )
                         send_file_handler = HandleFileRequestWorker(
                             requested_file_path,
                             (socket.getpeername()[0], file_req_header["port"]),
                             file_req_header["request_hash"],
                             file_req_header["resume_offset"],
                         )
-                        send_file_pool = QThreadPool.globalInstance()
-                        send_file_pool.setMaxThreadCount(4)
-                        send_file_pool.start(send_file_handler)
-                        return "File requested by user"
+                        # send_file_pool.setMaxThreadCount(4)
+                        self.send_file_pool.start(send_file_handler)
+                        return None
                     elif requested_file_path.is_dir():
                         raise RequestException(
                             f"Requested a directory, {file_req_header['filepath']} is not a file.",
@@ -337,8 +350,6 @@ class ReceiveHandler(QObject):
         global connected
         global server_socket_mutex
 
-        # peers: dict[str, str] = {}
-
         while True:
             read_sockets: list[socket.socket]
             read_sockets, _, __ = select.select(connected, [], [])
@@ -357,19 +368,19 @@ class ReceiveHandler(QObject):
                                 ip_to_uname[peer_addr[0]] = peer_uname
                         connected.append(peer_socket)
                     except Exception as e:
-                        logging.error(msg=e, exc_info=True)
+                        logging.exception(msg=e)
                         break
                 else:
                     try:
                         username = ip_to_uname[notified_socket.getpeername()[0]]
                         message_content: str = self.receive_msg(notified_socket)
-                        message: Message = {"sender": username, "content": message_content}
-                        if messages_store.get(username) is not None:
-                            messages_store[username].append(message)
-                        else:
-                            messages_store[username] = [message]
-                        self.message_received.emit(message)
-
+                        if message_content:
+                            message: Message = {"sender": username, "content": message_content}
+                            if messages_store.get(username) is not None:
+                                messages_store[username].append(message)
+                            else:
+                                messages_store[username] = [message]
+                            self.message_received.emit(message)
                     except RequestException as e:
                         if e.code == ExceptionCode.DISCONNECT:
                             try:
@@ -405,7 +416,6 @@ class SendFileWorker(QObject):
     def run(self):
         global self_uname
         if self.filepath and self.filepath.is_file():
-            # self.filepath: Path = SHARE_FOLDER_PATH / self.filepath
             logging.debug(f"{self.filepath} chosen to send")
             filemetadata: FileMetadata = {
                 "path": self.filepath.name,
@@ -466,15 +476,14 @@ class RequestFileWorker(QRunnable):
         self.parent_dir = parent_dir
         self.worker_signals = RequestFileSignals()
 
-        self.client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.client_peer_socket.connect((self.peer_ip, CLIENT_RECV_PORT))
-
         logging.debug(msg=f"Thread worker for requesting {uname}/{file_item['name']}")
 
     def run(self) -> str:
         global transfer_progress
         global user_settings
         # logging.debug(f"Requesting file, progress is {transfer_progress}")
+        self.client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.client_peer_socket.connect((self.peer_ip, CLIENT_RECV_PORT))
         file_recv_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         file_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         file_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
@@ -522,7 +531,6 @@ class RequestFileWorker(QRunnable):
                         ):
                             final_download_path: Path = get_unique_filename(
                                 Path(user_settings["downloads_folder_path"]) / file_header["path"],
-                                Path(user_settings["downloads_folder_path"]),
                             )
                             try:
                                 temp_path.parent.mkdir(parents=True, exist_ok=True)
@@ -608,10 +616,10 @@ class RequestFileWorker(QRunnable):
                                             msg=f"Failed integrity check for file {file_header['path']}"
                                         )
                                 except Exception as e:
-                                    logging.error(e, exc_info=True)
+                                    logging.exception(e)
                                     print("File received but failed to save")
                             except Exception as e:
-                                logging.error(e, exc_info=True)
+                                logging.exception(e)
                                 print("Unable to write file")
                         else:
                             logging.error(
@@ -637,12 +645,10 @@ class RequestFileWorker(QRunnable):
                         ExceptionCode.INVALID_HEADER,
                     )
                     raise err
-        except UnicodeDecodeError as e:
-            logging.error(f"UnicodeDecodeError: {e}")
-            # raise RequestException("Invalid message type in header", ExceptionCode.INVALID_HEADER)
         except Exception as e:
-            logging.error(e, exc_info=True)
-            # raise e
+            logging.exception(e)
+        finally:
+            self.client_peer_socket.close()
 
 
 class Ui_DrizzleMainWindow(QWidget):
@@ -819,7 +825,7 @@ class Ui_DrizzleMainWindow(QWidget):
         global uname_to_ip
 
         request_file_pool = QThreadPool.globalInstance()
-        request_file_pool.setMaxThreadCount(4)
+        # request_file_pool.setMaxThreadCount(4)
 
         for selected_item in selected_file_items:
             server_socket_mutex.lock("download files")
@@ -876,13 +882,6 @@ class Ui_DrizzleMainWindow(QWidget):
                     )
                     request_file_pool.start(request_file_worker)
 
-    def construct_message_html(self, message: Message, is_self: bool):
-        return f"""<p style=" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;">
-<span style=" font-weight:600; color:{'#1a5fb4' if is_self else '#e5a50a'};">{"You" if is_self else message["sender"]}: </span>
-{message["content"]}
-</p>
-        """
-
     def messages_controller(self, message: Message):
         global selected_uname
         global self_uname
@@ -896,7 +895,7 @@ class Ui_DrizzleMainWindow(QWidget):
             return
         messages_html = LEADING_HTML
         for message in messages_list:
-            messages_html += self.construct_message_html(message, message["sender"] == self_uname)
+            messages_html += construct_message_html(message, message["sender"] == self_uname)
         messages_html += TRAILING_HTML
         self.txtedit_MessagesArea.setHtml(messages_html)
         self.txtedit_MessagesArea.verticalScrollBar().setValue(
@@ -1220,20 +1219,6 @@ class Ui_DrizzleMainWindow(QWidget):
         self.vBoxLayout_ScrollContents = QVBoxLayout(self.scrollContents_FileProgress)
         self.vBoxLayout_ScrollContents.setObjectName("verticalLayout_5")
         self.vBoxLayout_ScrollContents.setAlignment(Qt.AlignTop)
-
-        # self.widget_6 = QWidget(self.scrollContents_FileProgress)
-        # self.widget_6.setObjectName("widget_6")
-        # sizePolicy6 = QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        # sizePolicy6.setHorizontalStretch(0)
-        # sizePolicy6.setVerticalStretch(0)
-        # sizePolicy6.setHeightForWidth(self.widget_6.sizePolicy().hasHeightForWidth())
-        # self.widget_6.setSizePolicy(sizePolicy6)
-        # self.widget_6.setMinimumSize(QSize(0, 40))
-        # self.widget_6.setMaximumSize(QSize(16777215, 40))
-        # self.horizontalLayout_8 = QHBoxLayout(self.widget_6)
-        # self.horizontalLayout_8.setObjectName("horizontalLayout_8")
-        # self.label_10 = QLabel(self.widget_6)
-        # self.label_10.setObjectName("label_10")
 
         self.scroll_FileProgress.setWidget(self.scrollContents_FileProgress)
 

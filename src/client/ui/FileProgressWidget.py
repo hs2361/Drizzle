@@ -1,9 +1,9 @@
 import sys
 from pathlib import Path
 
-from PyQt5.QtCore import *
-from PyQt5.QtGui import *
-from PyQt5.QtWidgets import *
+from PyQt5.QtCore import QCoreApplication, QMetaObject, QSize
+from PyQt5.QtGui import QFont
+from PyQt5.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QPushButton, QSizePolicy, QWidget
 
 sys.path.append("../")
 from utils.helpers import convert_size
@@ -64,13 +64,13 @@ class Ui_FileProgressWidget(QWidget):
 
         self.horizontalLayout.addLayout(self.horizontalLayout_2)
 
-        self.retranslateUi(Widget)
+        self.retranslateUi()
 
         QMetaObject.connectSlotsByName(Widget)
 
     # setupUi
 
-    def retranslateUi(self, Widget):
+    def retranslateUi(self):
         self.label.setText(QCoreApplication.translate("Widget", f"{self.path.name}", None))
         self.label.setToolTip(str(self.path))
         self.pushButton.setText(QCoreApplication.translate("Widget", "Pause", None))

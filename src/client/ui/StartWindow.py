@@ -1,9 +1,18 @@
 import logging
 import socket
 
-from PyQt5.QtCore import *
-from PyQt5.QtGui import *
-from PyQt5.QtWidgets import *
+from PyQt5.QtCore import QCoreApplication, QMetaObject
+from PyQt5.QtGui import QFont
+from PyQt5.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QSizePolicy,
+    QSpacerItem,
+    QVBoxLayout,
+    QWidget,
+)
 from ui.BasicConfigWindow import Ui_BasicConfigWindow
 
 CLIENT_IP = socket.gethostbyname(socket.gethostname())
@@ -85,6 +94,3 @@ class Ui_StartWindow(QWidget):
         logging.debug(f"Username updated, new settings: {MainWindow.user_settings}")
         MainWindow.ui = Ui_BasicConfigWindow(MainWindow)
         self.close()
-        # StartWindow.front_widget = 1
-        # StartWindow.pages[1].show()
-        # StartWindow.switch_page(StartWindow.front_widget)
