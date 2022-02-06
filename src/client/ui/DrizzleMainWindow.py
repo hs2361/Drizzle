@@ -83,6 +83,7 @@ from utils.socket_functions import (
     update_share_data,
 )
 from utils.types import (
+    CompressionMethod,
     DBData,
     DirData,
     DirProgress,
@@ -459,26 +460,29 @@ class SendFileWorker(QObject):
         self.completed.emit()
 
 
-class RequestFileSignals(QObject):
+class Signals(QObject):
     receiving_new_file = pyqtSignal(tuple)
     file_progress_update = pyqtSignal(Path)
     dir_progress_update = pyqtSignal(tuple)
+    pause_download = pyqtSignal(Path)
+    resume_download = pyqtSignal(Path)
+    file_download_complete = pyqtSignal(Path)
 
 
 class RequestFileWorker(QRunnable):
     def __init__(
-        self, file_item: DirData, peer_ip: str, uname: str, parent_dir: Path | None
+        self, file_item: DirData, peer_ip: str, sender: str, parent_dir: Path | None
     ) -> None:
         super().__init__()
         self.file_item = file_item
         self.peer_ip = peer_ip
-        self.uname = uname
+        self.sender = sender
         self.parent_dir = parent_dir
-        self.worker_signals = RequestFileSignals()
+        self.signals = Signals()
 
-        logging.debug(msg=f"Thread worker for requesting {uname}/{file_item['name']}")
+        logging.debug(msg=f"Thread worker for requesting {sender}/{file_item['name']}")
 
-    def run(self) -> str:
+    def run(self) -> None:
         global transfer_progress
         global user_settings
         # logging.debug(f"Requesting file, progress is {transfer_progress}")
@@ -492,7 +496,7 @@ class RequestFileWorker(QRunnable):
         file_recv_port = file_recv_socket.getsockname()[1]
 
         offset = 0
-        temp_path: Path = TEMP_FOLDER_PATH.joinpath(self.uname + "/" + self.file_item["path"])
+        temp_path: Path = TEMP_FOLDER_PATH / self.sender / self.file_item["path"]
         logging.debug(f"Using temp path {str(temp_path)}")
         if temp_path.exists():
             offset = temp_path.stat().st_size
@@ -557,7 +561,7 @@ class RequestFileWorker(QRunnable):
                                         ] = TransferStatus.DOWNLOADING
                                     if offset == 0:
                                         if self.parent_dir is None:
-                                            self.worker_signals.receiving_new_file.emit(
+                                            self.signals.receiving_new_file.emit(
                                                 (temp_path, file_header["size"])
                                             )
                                     while True:
@@ -567,24 +571,23 @@ class RequestFileWorker(QRunnable):
                                         ):
                                             file_to_write.close()
                                             file_recv_socket.close()
-                                            return f"Download for file {file_header['path']} was paused"
+                                            return
                                         file_bytes_read: bytes = sender.recv(FILE_BUFFER_LEN)
                                         if not offset:
                                             hash.update(file_bytes_read)
                                         num_bytes_read = len(file_bytes_read)
                                         byte_count += num_bytes_read
-                                        transfer_progress[temp_path]["progress"] = byte_count
-                                        transfer_progress[temp_path]["percent_progress"] = (
-                                            100 * byte_count / file_header["size"]
+                                        transfer_progress[temp_path]["progress"] = (
+                                            byte_count + offset
                                         )
                                         file_to_write.write(file_bytes_read)
                                         # logging.debug(
                                         #     msg=f"Received chunk of size {num_bytes_read}, received {byte_count} of {file_header['size']}"
                                         # )
                                         if self.parent_dir is None:
-                                            self.worker_signals.file_progress_update.emit(temp_path)
+                                            self.signals.file_progress_update.emit(temp_path)
                                         else:
-                                            self.worker_signals.dir_progress_update.emit(
+                                            self.signals.dir_progress_update.emit(
                                                 (self.parent_dir, num_bytes_read)
                                             )
                                         if num_bytes_read == 0:
@@ -608,6 +611,7 @@ class RequestFileWorker(QRunnable):
                                         )
                                         shutil.move(temp_path, final_download_path)
                                         print("Succesfully received 1 file")
+                                        self.signals.file_download_complete.emit(temp_path)
                                     else:
                                         transfer_progress[temp_path][
                                             "status"
@@ -661,6 +665,10 @@ class Ui_DrizzleMainWindow(QWidget):
         try:
             global user_settings
             self.user_settings = MainWindow.user_settings
+            self.signals = Signals()
+            self.signals.pause_download.connect(self.pause_download)
+            self.signals.resume_download.connect(self.resume_download)
+
             user_settings = MainWindow.user_settings
             SERVER_IP = self.user_settings["server_ip"]
             SERVER_ADDR = (SERVER_IP, SERVER_RECV_PORT)
@@ -682,7 +690,6 @@ class Ui_DrizzleMainWindow(QWidget):
                 )
                 if exception.code == ExceptionCode.USER_EXISTS:
                     logging.error(msg=exception.msg)
-                    print("\nSorry that username is taken, please choose another one")
                     error_dialog = QDialog()
                     error_dialog.ui = Ui_ErrorDialog(
                         error_dialog,
@@ -849,11 +856,10 @@ class Ui_DrizzleMainWindow(QWidget):
                 request_file_worker = RequestFileWorker(
                     selected_item, peer_ip, selected_uname, None
                 )
-                request_file_worker.worker_signals.receiving_new_file.connect(
-                    self.new_file_progress
-                )
-                request_file_worker.worker_signals.file_progress_update.connect(
-                    self.update_file_progress
+                request_file_worker.signals.receiving_new_file.connect(self.new_file_progress)
+                request_file_worker.signals.file_progress_update.connect(self.update_file_progress)
+                request_file_worker.signals.file_download_complete.connect(
+                    self.remove_progress_widget
                 )
                 request_file_pool.start(request_file_worker)
             else:
@@ -877,7 +883,7 @@ class Ui_DrizzleMainWindow(QWidget):
                     }
                 for file in files_to_request:
                     request_file_worker = RequestFileWorker(file, peer_ip, selected_uname, dir_path)
-                    request_file_worker.worker_signals.dir_progress_update.connect(
+                    request_file_worker.signals.dir_progress_update.connect(
                         self.update_dir_progress
                     )
                     request_file_pool.start(request_file_worker)
@@ -1341,10 +1347,92 @@ class Ui_DrizzleMainWindow(QWidget):
 
         self.send_file_thread.start()
 
+    def pause_download(self, path: Path) -> None:
+        logging.debug(f"Paused file {path}")
+        if path.is_file():
+            transfer_progress[path]["status"] = TransferStatus.PAUSED
+        else:
+            for (pathname, progress) in transfer_progress.items():
+                if path in pathname.parents:
+                    if progress["status"] in [
+                        TransferStatus.DOWNLOADING,
+                        TransferStatus.NEVER_STARTED,
+                    ]:
+                        transfer_progress[pathname]["status"] = TransferStatus.PAUSED
+
+    def resume_download(self, path: Path) -> None:
+        relative_path = path.relative_to(TEMP_FOLDER_PATH)
+        uname = str(relative_path.parents[-2])
+        peer_ip = request_ip(uname, client_send_socket)
+        pool = QThreadPool.globalInstance()
+        if path.is_file():
+            file_item: DirData = {
+                "name": path.name,
+                "path": str(relative_path).removeprefix(uname + "/"),
+                "type": "file",
+                "size": 0,
+                "hash": None,
+                "compression": CompressionMethod.NONE,
+                "children": None,
+            }
+            if peer_ip is not None:
+                transfer_progress[path]["status"] = TransferStatus.DOWNLOADING
+                worker = RequestFileWorker(file_item, peer_ip, uname, None)
+                worker.signals.file_progress_update.connect(self.update_file_progress)
+                worker.signals.file_download_complete.connect(self.remove_progress_widget)
+                pool.start(worker)
+            else:
+                print(f"\nUser with username {uname} not found")
+        elif path.is_dir():
+            paused_items: list[DirData] = []
+            for (pathname, progress) in transfer_progress.items():
+                if path in pathname.parents:
+                    if progress["status"] == TransferStatus.PAUSED:
+                        transfer_progress[pathname]["status"] = TransferStatus.DOWNLOADING
+                        paused_items.append(
+                            {
+                                "name": pathname.name,
+                                "path": str(pathname.relative_to(TEMP_FOLDER_PATH / uname)),
+                                "type": "file",
+                                "size": 0,
+                                "hash": None,
+                                "compression": CompressionMethod.NONE,
+                                "children": None,
+                            }
+                        )
+            for file in paused_items:
+                transfer_progress[TEMP_FOLDER_PATH / selected_uname / file["path"]][
+                    "status"
+                ] = TransferStatus.DOWNLOADING
+
+            for file in paused_items:
+                request_file_worker = RequestFileWorker(file, peer_ip, selected_uname, path)
+                request_file_worker.signals.dir_progress_update.connect(self.update_dir_progress)
+                pool.start(request_file_worker)
+            # for file in paused_items:
+            #     worker = RequestFileWorker(file, peer_ip, uname, None)
+            #     worker.signals.file_progress_update.connect(self.update_file_progress)
+            #     worker.signals.file_download_complete.connect(self.remove_progress_widget)
+
+    def remove_progress_widget(self, path: Path) -> None:
+        global progress_widgets
+        widget = progress_widgets.get(path)
+        if widget is not None:
+            self.vBoxLayout_ScrollContents.removeWidget(widget)
+            del progress_widgets[path]
+        else:
+            logging.error(f"Could not find progress widget for {path}")
+
     def new_file_progress(self, data: tuple[Path, int]):
         global progress_widgets
         file_progress_widget = QWidget(self.scrollContents_FileProgress)
-        file_progress_widget.ui = Ui_FileProgressWidget(file_progress_widget, data[0], data[1])
+        file_progress_widget.ui = Ui_FileProgressWidget(
+            file_progress_widget,
+            data[0],
+            data[1],
+            self.signals.pause_download,
+            self.signals.resume_download,
+        )
         self.vBoxLayout_ScrollContents.addWidget(file_progress_widget)
         progress_widgets[data[0]] = file_progress_widget
 
@@ -1359,5 +1447,8 @@ class Ui_DrizzleMainWindow(QWidget):
         path, increment = progress_data
         dir_progress[path]["mutex"].lock("update dir progress")
         dir_progress[path]["current"] += increment
-        progress_widgets[path].ui.update_progress(dir_progress[path]["current"])
+        if dir_progress[path]["current"] == dir_progress[path]["total"]:
+            self.remove_progress_widget(path)
+        else:
+            progress_widgets[path].ui.update_progress(dir_progress[path]["current"])
         dir_progress[path]["mutex"].unlock("update dir progress")

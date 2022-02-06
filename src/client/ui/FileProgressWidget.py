@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 
-from PyQt5.QtCore import QCoreApplication, QMetaObject, QSize
+from PyQt5.QtCore import QCoreApplication, QMetaObject, QSize, pyqtSignal
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QPushButton, QSizePolicy, QWidget
 
@@ -10,16 +10,36 @@ from utils.helpers import convert_size
 
 
 class Ui_FileProgressWidget(QWidget):
-    def __init__(self, Widget, item_path: Path, total: int):
+    def __init__(
+        self,
+        Widget,
+        item_path: Path,
+        total: int,
+        pause_signal: pyqtSignal,
+        resume_signal: pyqtSignal,
+    ):
         super(Ui_FileProgressWidget, self).__init__()
         self.path = item_path
         self.total = convert_size(total)
+        self.pause_signal = pause_signal
+        self.resume_signal = resume_signal
         self.setupUi(Widget, total)
+        self.paused = False
 
     def update_progress(self, new_val: float):
         converted_size = convert_size(round(new_val))
         self.progressBar.setFormat(f"{converted_size}/{self.total}")
         self.progressBar.setValue(round(new_val))
+
+    def toggle_download(self):
+        if not self.paused:
+            self.pause_signal.emit(self.path)
+            self.btn_Toggle.setText("▶")
+            self.paused = True
+        else:
+            self.resume_signal.emit(self.path)
+            self.btn_Toggle.setText("⏸")
+            self.paused = False
 
     def setupUi(self, Widget, total: int):
         if not Widget.objectName():
@@ -57,10 +77,10 @@ class Ui_FileProgressWidget(QWidget):
 
         self.horizontalLayout_2.addWidget(self.progressBar)
 
-        self.pushButton = QPushButton(Widget)
-        self.pushButton.setObjectName("pushButton")
-
-        self.horizontalLayout_2.addWidget(self.pushButton)
+        self.btn_Toggle = QPushButton(Widget)
+        self.btn_Toggle.setObjectName("pushButton")
+        self.btn_Toggle.clicked.connect(self.toggle_download)  # type: ignore
+        self.horizontalLayout_2.addWidget(self.btn_Toggle)
 
         self.horizontalLayout.addLayout(self.horizontalLayout_2)
 
@@ -73,6 +93,6 @@ class Ui_FileProgressWidget(QWidget):
     def retranslateUi(self):
         self.label.setText(QCoreApplication.translate("Widget", f"{self.path.name}", None))
         self.label.setToolTip(str(self.path))
-        self.pushButton.setText(QCoreApplication.translate("Widget", "Pause", None))
+        self.btn_Toggle.setText(QCoreApplication.translate("Widget", "⏸", None))
 
     # retranslateUi
