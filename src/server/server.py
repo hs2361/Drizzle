@@ -70,10 +70,10 @@ def receive_msg(client_socket: socket.socket) -> SocketMessage:
         return {"type": HeaderCode(message_type), "query": "online"}
     else:
         message_len = int(client_socket.recv(HEADER_MSG_LEN).decode(FMT))
+        logging.debug(
+            msg=f"Receiving packet: TYPE {message_type} LEN {message_len} from {client_socket.getpeername()}"
+        )
         query = recvall(client_socket, message_len)
-        # logging.debug(
-        #     msg=f"Received packet: TYPE {message_type} LEN {message_len} from {client_socket.getpeername()}"
-        # )
         return {"type": HeaderCode(message_type), "query": query}
 
 
@@ -200,6 +200,7 @@ def read_handler(notified_socket: socket.socket) -> None:
                             {"uname": username, "share": share_data},
                             User.uname == username,
                         )
+                        notified_socket.send(HeaderCode.SHARE_DATA.value.encode(FMT))
                     else:
                         raise RequestException(
                             msg=f"Username does not exist",

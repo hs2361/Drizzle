@@ -97,3 +97,6 @@ def update_share_data(share_folder_path: Path, client_send_socket: socket.socket
         FMT
     )
     client_send_socket.sendall(share_data_header + share_data)
+    msg_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
+    if msg_type != HeaderCode.SHARE_DATA.value:
+        logging.error("Invalid message type from server")
