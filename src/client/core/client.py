@@ -163,7 +163,7 @@ def request_file(
                 sender, _ = file_recv_socket.accept()
                 logging.debug(msg=f"Sender tried to connect: {sender.getpeername()}")
                 res_type = sender.recv(HEADER_TYPE_LEN).decode(FMT)
-                if res_type == HeaderCode.FILE.value:
+                if res_type == HeaderCode.DIRECT_TRANSFER.value:
                     file_header_len = int(sender.recv(HEADER_MSG_LEN).decode(FMT))
                     file_header: FileMetadata = msgpack.unpackb(sender.recv(file_header_len))
                     logging.debug(msg=f"receiving file with metadata {file_header}")
@@ -463,7 +463,7 @@ def send_handler() -> None:
                                         logging.debug(filemetadata)
                                         filemetadata_bytes = msgpack.packb(filemetadata)
                                         logging.debug(filemetadata_bytes)
-                                        filesend_header = f"{HeaderCode.FILE.value}{len(filemetadata_bytes):<{HEADER_MSG_LEN}}".encode(
+                                        filesend_header = f"{HeaderCode.DIRECT_TRANSFER.value}{len(filemetadata_bytes):<{HEADER_MSG_LEN}}".encode(
                                             FMT
                                         )
                                         try:
@@ -687,8 +687,8 @@ def send_file(
     logging.debug(filemetadata)
     filemetadata_bytes = msgpack.packb(filemetadata)
     logging.debug(filemetadata_bytes)
-    filesend_header = f"{HeaderCode.FILE.value}{len(filemetadata_bytes):<{HEADER_MSG_LEN}}".encode(
-        FMT
+    filesend_header = (
+        f"{HeaderCode.DIRECT_TRANSFER.value}{len(filemetadata_bytes):<{HEADER_MSG_LEN}}".encode(FMT)
     )
 
     try:
@@ -747,7 +747,7 @@ def receive_msg(socket: socket.socket) -> str:
         )
     elif message_type not in [
         HeaderCode.MESSAGE.value,
-        HeaderCode.FILE.value,
+        HeaderCode.DIRECT_TRANSFER.value,
         HeaderCode.FILE_REQUEST.value,
     ]:
         raise RequestException(
@@ -756,7 +756,7 @@ def receive_msg(socket: socket.socket) -> str:
         )
     else:
         match message_type:
-            case HeaderCode.FILE.value:
+            case HeaderCode.DIRECT_TRANSFER.value:
                 file_header_len = int(socket.recv(HEADER_MSG_LEN).decode(FMT))
                 file_header: FileMetadata = msgpack.unpackb(socket.recv(file_header_len))
                 logging.debug(msg=f"receiving file with metadata {file_header}")

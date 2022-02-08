@@ -6,7 +6,8 @@ from PyQt5.QtCore import QMutex
 
 class HeaderCode(Enum):
     ERROR = "e"
-    FILE = "f"
+    DIRECT_TRANSFER_REQUEST = "t"
+    DIRECT_TRANSFER = "T"
     FILE_REQUEST = "F"
     FILE_SEARCH = "s"
     HEARTBEAT_REQUEST = "H"

@@ -1,3 +1,5 @@
+from typing import Callable
+
 from PyQt5.QtCore import QCoreApplication, QMetaObject, QSize, Qt
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
@@ -15,9 +17,10 @@ from PyQt5.QtWidgets import (
 
 
 class Ui_FileInfoDialog(QDialog):
-    def __init__(self, Dialog, filedata):
+    def __init__(self, Dialog, filedata, download_handler: Callable[[], None]):
         super(Ui_FileInfoDialog, self).__init__()
         self.filedata = filedata
+        self.download_handler = download_handler
         self.setupUi(Dialog)
 
     def setupUi(self, Dialog):
@@ -125,10 +128,11 @@ class Ui_FileInfoDialog(QDialog):
 
         self.horizontalLayout.addWidget(self.btn_Close)
 
-        self.pushButton = QPushButton(Dialog)
-        self.pushButton.setObjectName("pushButton")
+        self.btn_Download = QPushButton(Dialog)
+        self.btn_Download.setObjectName("pushButton")
+        self.btn_Download.clicked.connect(self.download_handler)
 
-        self.horizontalLayout.addWidget(self.pushButton)
+        self.horizontalLayout.addWidget(self.btn_Download)
 
         self.verticalLayout.addLayout(self.horizontalLayout)
 
@@ -167,6 +171,6 @@ class Ui_FileInfoDialog(QDialog):
             QCoreApplication.translate("Dialog", f"{self.filedata['owner']}", None)
         )
         self.btn_Close.setText(QCoreApplication.translate("Dialog", "Close", None))
-        self.pushButton.setText(QCoreApplication.translate("Dialog", "Download", None))
+        self.btn_Download.setText(QCoreApplication.translate("Dialog", "Download", None))
 
     # retranslateUi
