@@ -245,6 +245,7 @@ class HeartbeatWorker(QObject):
 
 class ReceiveDirectTransferWorker(QObject):
     def __init__(self, metadata: FileMetadata, sender: str, file_receive_socket: socket.socket):
+        super().__init__()
         self.metadata = metadata
         self.sender = sender
         self.file_recv_socket = file_receive_socket
@@ -575,31 +576,30 @@ class SendFileWorker(QObject):
                     port = int(self.client_peer_socket.recv(response_len).decode(FMT))
                     if port != -1:
                         file_send_socket.connect(self.peer_ip, port)
-                        file_to_send = self.filepath.open(mode="rb")
-                        total_bytes_read = 0
-                        msg = f"Sending file {str(self.filepath)}"
-                        if messages_store.get(selected_uname) is not None:
-                            messages_store[selected_uname].append(
-                                {"sender": self_uname, "content": msg}
-                            )
-                        else:
-                            messages_store[selected_uname] = [
-                                {"sender": self_uname, "content": msg}
-                            ]
-                        self.sending_file.emit({"sender": self_uname, "content": msg})
-                        while total_bytes_read != filemetadata["size"]:
-                            logging.debug(
-                                f'sending file bytes {total_bytes_read} of {filemetadata["size"]}'
-                            )
-                            bytes_read = file_to_send.read(FILE_BUFFER_LEN)
-                            file_send_socket.sendall(bytes_read)
-                            num_bytes = len(bytes_read)
-                            total_bytes_read += num_bytes
-                        print("\nFile Sent")
+                        with self.filepath.open(mode="rb") as file_to_send:
+                            total_bytes_read = 0
+                            msg = f"Sending file {str(self.filepath)}"
+                            if messages_store.get(selected_uname) is not None:
+                                messages_store[selected_uname].append(
+                                    {"sender": self_uname, "content": msg}
+                                )
+                            else:
+                                messages_store[selected_uname] = [
+                                    {"sender": self_uname, "content": msg}
+                                ]
+                            self.sending_file.emit({"sender": self_uname, "content": msg})
+                            while total_bytes_read != filemetadata["size"]:
+                                logging.debug(
+                                    f'sending file bytes {total_bytes_read} of {filemetadata["size"]}'
+                                )
+                                bytes_read = file_to_send.read(FILE_BUFFER_LEN)
+                                file_send_socket.sendall(bytes_read)
+                                num_bytes = len(bytes_read)
+                                total_bytes_read += num_bytes
+                            print("\nFile Sent")
             except Exception as e:
                 logging.error(f"Direct transfer failed: {e}")
             finally:
-                file_to_send.close()
                 file_send_socket.close()
 
         else:
@@ -1658,8 +1658,10 @@ class Ui_DrizzleMainWindow(QWidget):
         )
         btn_Accept = message_box.addButton(QMessageBox.Yes)
         btn_Reject = message_box.addButton(QMessageBox.No)
-        btn_Accept.clicked.connect(self.direct_transfer_accept)
-        btn_Reject.clicked.connect(self.direct_transfer_reject)
+        btn_Accept.clicked.connect(
+            lambda: self.direct_transfer_accept(metadata, username, peer_socket)
+        )
+        btn_Reject.clicked.connect(lambda: self.direct_transfer_reject(peer_socket))
         message_box.exec()
 
     def direct_transfer_accept(
