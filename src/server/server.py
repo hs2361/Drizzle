@@ -72,6 +72,19 @@ def receive_msg(client_socket: socket.socket) -> SocketMessage:
     elif message_type == HeaderCode.HEARTBEAT_REQUEST.value:
         return {"type": HeaderCode(message_type), "query": "online"}
     else:
+        username = ip_to_uname.get(notified_socket.getpeername()[0])
+        if username is not None:
+            uname_to_status[username] = time.time()
+            data = msgpack.packb(uname_to_status)
+            header = f"{HeaderCode.HEARTBEAT_REQUEST.value}{len(data):<{HEADER_MSG_LEN}}".encode(
+                FMT
+            )
+            notified_socket.sendall(header + data)
+        else:
+            raise RequestException(
+                msg=f"Username does not exist",
+                code=ExceptionCode.NOT_FOUND,
+            )
         message_len = int(client_socket.recv(HEADER_MSG_LEN).decode(FMT))
         logging.debug(
             msg=f"Receiving packet: TYPE {message_type} LEN {message_len} from {client_socket.getpeername()}"
