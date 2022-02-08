@@ -3,6 +3,7 @@ import select
 import socket
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import msgpack
@@ -21,7 +22,9 @@ IP = get_self_ip()
 logging.basicConfig(
     level=logging.DEBUG,
     handlers=[
-        logging.FileHandler(f"{str(Path.home())}/.Drizzle/logs/server_{IP}.log"),
+        logging.FileHandler(
+            f"{str(Path.home())}/.Drizzle/logs/server_{datetime.now().strftime('%d-%m-%Y_%H-%M-%S')}.log"
+        ),
         logging.StreamHandler(sys.stdout),
     ],
 )

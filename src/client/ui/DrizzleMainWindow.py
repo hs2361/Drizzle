@@ -1,12 +1,15 @@
 import hashlib
 import json
 import logging
+import pickle
 import select
 import shutil
 import socket
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
+from pprint import pformat
 
 import msgpack
 from PyQt5.QtCore import (
@@ -68,6 +71,7 @@ from utils.exceptions import ExceptionCode, RequestException
 from utils.helpers import (
     construct_message_html,
     convert_size,
+    generate_transfer_progress,
     get_directory_size,
     get_file_hash,
     get_files_in_dir,
@@ -91,6 +95,7 @@ from utils.types import (
     FileRequest,
     HeaderCode,
     Message,
+    ProgressBarData,
     TransferProgress,
     TransferStatus,
     UpdateHashParams,
@@ -105,7 +110,9 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-8s %(message)s",
     level=logging.DEBUG,
     handlers=[
-        logging.FileHandler(f"{str(Path.home())}/.Drizzle/logs/client.log"),
+        logging.FileHandler(
+            f"{str(Path.home())}/.Drizzle/logs/client_{datetime.now().strftime('%d-%m-%Y_%H-%M-%S')}.log"
+        ),
         logging.StreamHandler(sys.stdout),
     ],
 )
@@ -150,6 +157,57 @@ class ServerMutex(QMutex):
 
 
 server_socket_mutex = ServerMutex()
+
+
+class SaveProgressWorker(QObject):
+    def dump_progress_data(self) -> None:
+        global transfer_progress
+        global dir_progress
+        global progress_widgets
+
+        for path in transfer_progress.keys():
+            if transfer_progress[path]["status"] in [
+                TransferStatus.DOWNLOADING,
+                TransferStatus.NEVER_STARTED,
+            ]:
+                transfer_progress[path]["status"] = TransferStatus.PAUSED
+
+        with (Path.home() / ".Drizzle/db/transfer_progress.obj").open(
+            mode="wb"
+        ) as transfer_progress_dump:
+            logging.debug(msg="Created transfer progress dump")
+            pickle.dump(transfer_progress, transfer_progress_dump)
+        with (Path.home() / ".Drizzle/db/dir_progress.obj").open(mode="wb") as dir_progress_dump:
+            logging.debug(msg="Created dir progress dump")
+            dir_progress_writeable: dict[Path, DirProgress] = {}
+            for path in dir_progress.keys():
+                dir_progress[path]["mutex"].lock("dump")
+                dir_progress_writeable[path] = {
+                    "current": dir_progress[path]["current"],
+                    "total": dir_progress[path]["total"],
+                    "status": dir_progress[path]["status"],
+                }
+                dir_progress[path]["mutex"].unlock("dump")
+            pickle.dump(dir_progress_writeable, dir_progress_dump)
+        with (Path.home() / ".Drizzle/db/progress_widgets.obj").open(
+            mode="wb"
+        ) as progress_widgets_dump:
+            progress_widgets_writeable: dict[Path, ProgressBarData] = {}
+            for path, widget in progress_widgets.items():
+                progress_widgets_writeable[path] = {
+                    "current": widget.ui.progressBar.value(),
+                    "total": widget.ui.total,
+                }
+            pickle.dump(progress_widgets_writeable, progress_widgets_dump)
+
+    def run(self):
+        global transfer_progress
+        global dir_progress
+        global progress_widgets
+
+        while True:
+            self.dump_progress_data()
+            time.sleep(10)
 
 
 class HeartbeatWorker(QObject):
@@ -559,7 +617,7 @@ class RequestFileWorker(QRunnable):
                                         transfer_progress[temp_path][
                                             "status"
                                         ] = TransferStatus.DOWNLOADING
-                                    if offset == 0:
+                                    if offset == 0 or progress_widgets.get(temp_path) is None:
                                         if self.parent_dir is None:
                                             self.signals.receiving_new_file.emit(
                                                 (temp_path, file_header["size"])
@@ -612,6 +670,7 @@ class RequestFileWorker(QRunnable):
                                         shutil.move(temp_path, final_download_path)
                                         print("Succesfully received 1 file")
                                         self.signals.file_download_complete.emit(temp_path)
+                                        del transfer_progress[temp_path]
                                     else:
                                         transfer_progress[temp_path][
                                             "status"
@@ -660,16 +719,50 @@ class Ui_DrizzleMainWindow(QWidget):
     global client_recv_socket
     global uname_to_status
 
+    def dump_progress_data(self) -> None:
+        worker = SaveProgressWorker()
+        worker.dump_progress_data()
+
     def __init__(self, MainWindow):
         super(Ui_DrizzleMainWindow, self).__init__()
         try:
             global user_settings
+            global dir_progress
+            global transfer_progress
+            global progress_widgets
             self.user_settings = MainWindow.user_settings
             self.signals = Signals()
             self.signals.pause_download.connect(self.pause_download)
             self.signals.resume_download.connect(self.resume_download)
 
             user_settings = MainWindow.user_settings
+            try:
+                with (Path.home() / ".Drizzle/db/transfer_progress.obj").open(
+                    mode="rb"
+                ) as transfer_progress_dump:
+                    transfer_progress_dump.seek(0)
+                    transfer_progress = pickle.load(transfer_progress_dump)
+            except Exception as e:
+                # Fallback if no dump was created
+                logging.error(msg=f"Failed to load transfer progress from dump: {e}")
+                transfer_progress = generate_transfer_progress()
+                logging.debug(msg=f"Transfer Progress generated\n{pformat(transfer_progress)}")
+            try:
+                with (Path.home() / ".Drizzle/db/dir_progress.obj").open(
+                    mode="rb"
+                ) as dir_progress_dump:
+                    dir_progress_dump.seek(0)
+                    dir_progress_readable: dict[Path, DirProgress] = pickle.load(dir_progress_dump)
+                    for path, data in dir_progress_readable.items():
+                        dir_progress[path] = data
+                        dir_progress[path]["mutex"] = ServerMutex()
+                    logging.debug(msg=f"Dir progress loaded from dump\n{pformat(dir_progress)}")
+            except Exception as e:
+                # Fallback if no dump was created
+                logging.error(msg=f"Failed to load dir progress from dump: {e}")
+                # transfer_progress = generate_transfer_progress()
+                # logging.debug(msg=f"Dir progress generated\n{pformat(dir_progress)}")
+
             SERVER_IP = self.user_settings["server_ip"]
             SERVER_ADDR = (SERVER_IP, SERVER_RECV_PORT)
             client_send_socket.settimeout(10)
@@ -713,6 +806,12 @@ class Ui_DrizzleMainWindow(QWidget):
             self.heartbeat_worker.update_status.connect(self.update_online_status)
             self.heartbeat_thread.start()
 
+            self.save_progress_thread = QThread()
+            self.save_progress_worker = SaveProgressWorker()
+            self.save_progress_worker.moveToThread(self.save_progress_thread)
+            self.save_progress_thread.started.connect(self.save_progress_worker.run)
+            # self.save_progress_thread.start()
+
             self.receive_thread = QThread()
             self.receive_worker = ReceiveHandler()
             self.receive_worker.moveToThread(self.receive_thread)
@@ -731,6 +830,26 @@ class Ui_DrizzleMainWindow(QWidget):
             sys.exit(error_dialog.exec())
 
         self.setupUi(MainWindow)
+
+        try:
+            with (Path.home() / ".Drizzle/db/progress_widgets.obj").open(
+                mode="rb"
+            ) as progress_widgets_dump:
+                progress_widgets_dump.seek(0)
+                progress_widgets_readable: dict[Path, ProgressBarData] = pickle.load(
+                    progress_widgets_dump
+                )
+                for path, data in progress_widgets_readable.items():
+                    self.new_file_progress((path, data["total"]))
+                    progress_widgets[path].ui.update_progress(data["current"])
+                    progress_widgets[path].ui.btn_Toggle.setText("▶")
+                    progress_widgets[path].ui.paused = True
+                logging.debug(msg=f"Progress widgets loaded from dump\n{pformat(progress_widgets)}")
+        except Exception as e:
+            # Fallback if no dump was created
+            logging.error(msg=f"Failed to load progress widgets from dump: {e}")
+            # transfer_progress = generate_transfer_progress()
+            # logging.debug(msg=f"Progress widgets generated\n{pformat(dir_progress)}")
 
     def send_message(self):
         global client_send_socket
@@ -1361,6 +1480,7 @@ class Ui_DrizzleMainWindow(QWidget):
                         transfer_progress[pathname]["status"] = TransferStatus.PAUSED
 
     def resume_download(self, path: Path) -> None:
+        global transfer_progress
         relative_path = path.relative_to(TEMP_FOLDER_PATH)
         uname = str(relative_path.parents[-2])
         peer_ip = request_ip(uname, client_send_socket)
@@ -1401,12 +1521,12 @@ class Ui_DrizzleMainWindow(QWidget):
                             }
                         )
             for file in paused_items:
-                transfer_progress[TEMP_FOLDER_PATH / selected_uname / file["path"]][
+                transfer_progress[TEMP_FOLDER_PATH / uname / file["path"]][
                     "status"
                 ] = TransferStatus.DOWNLOADING
 
             for file in paused_items:
-                request_file_worker = RequestFileWorker(file, peer_ip, selected_uname, path)
+                request_file_worker = RequestFileWorker(file, peer_ip, uname, path)
                 request_file_worker.signals.dir_progress_update.connect(self.update_dir_progress)
                 pool.start(request_file_worker)
             # for file in paused_items:
@@ -1421,7 +1541,7 @@ class Ui_DrizzleMainWindow(QWidget):
             self.vBoxLayout_ScrollContents.removeWidget(widget)
             del progress_widgets[path]
         else:
-            logging.error(f"Could not find progress widget for {path}")
+            logging.info(f"Could not find progress widget for {path}")
 
     def new_file_progress(self, data: tuple[Path, int]):
         global progress_widgets
@@ -1439,6 +1559,7 @@ class Ui_DrizzleMainWindow(QWidget):
     def update_file_progress(self, path: Path):
         global transfer_progress
         global progress_widgets
+        logging.debug(f"progress_widgets: {progress_widgets}")
         progress_widgets[path].ui.update_progress(transfer_progress[path]["progress"])
 
     def update_dir_progress(self, progress_data: tuple[Path, int]):

@@ -39,10 +39,15 @@ class TransferProgress(TypedDict):
 
 
 class DirProgress(TypedDict):
-    mutex: QMutex
+    mutex: QMutex | None
     current: int
     total: int
     status: TransferStatus
+
+
+class ProgressBarData(TypedDict):
+    current: int
+    total: int
 
 
 class SocketMessage(TypedDict):

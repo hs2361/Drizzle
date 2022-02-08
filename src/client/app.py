@@ -18,6 +18,11 @@ logging.basicConfig(level=logging.DEBUG)
 
 
 class MainWindow(QMainWindow):
+    def closeEvent(self, event) -> None:
+        logging.debug("Closing main window")
+        self.ui.dump_progress_data()
+        return super().closeEvent(event)
+
     def __init__(self):
         super(MainWindow, self).__init__()
         self.center()

@@ -20,16 +20,17 @@ class Ui_FileProgressWidget(QWidget):
     ):
         super(Ui_FileProgressWidget, self).__init__()
         self.path = item_path
-        self.total = convert_size(total)
+        self.total = total
+        self.fmt_total = convert_size(total)
         self.pause_signal = pause_signal
         self.resume_signal = resume_signal
         self.setupUi(Widget, total)
         self.paused = False
 
-    def update_progress(self, new_val: float):
-        converted_size = convert_size(round(new_val))
-        self.progressBar.setFormat(f"{converted_size}/{self.total}")
-        self.progressBar.setValue(round(new_val))
+    def update_progress(self, new_val: int):
+        converted_size = convert_size(new_val)
+        self.progressBar.setFormat(f"{converted_size}/{self.fmt_total}")
+        self.progressBar.setValue(new_val)
 
     def toggle_download(self):
         if not self.paused:
