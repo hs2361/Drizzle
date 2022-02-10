@@ -123,8 +123,8 @@ client_send_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 client_recv_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 client_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 client_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-client_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
-client_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
+# client_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
+# client_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
 client_send_socket.bind((CLIENT_IP, CLIENT_SEND_PORT))
 client_recv_socket.bind((CLIENT_IP, CLIENT_RECV_PORT))
 client_recv_socket.listen(5)
@@ -327,7 +327,7 @@ class HandleFileRequestWorker(QRunnable):
     def run(self) -> None:
         file_send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         file_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        file_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
+        # file_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
         file_send_socket.connect(self.requester)
         hash = ""
 
@@ -647,7 +647,7 @@ class RequestFileWorker(QRunnable):
         self.client_peer_socket.connect((self.peer_ip, CLIENT_RECV_PORT))
         file_recv_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         file_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        file_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
+        # file_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
         file_recv_socket.bind((CLIENT_IP, 0))
         file_recv_socket.listen()
         file_recv_port = file_recv_socket.getsockname()[1]
