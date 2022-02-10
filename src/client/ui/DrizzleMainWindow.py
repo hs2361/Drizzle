@@ -243,9 +243,10 @@ class HeartbeatWorker(QObject):
                 sys.exit(error_dialog.exec())
 
 
-class ReceiveDirectTransferWorker(QObject):
+class ReceiveDirectTransferWorker(QRunnable):
     def __init__(self, metadata: FileMetadata, sender: str, file_receive_socket: socket.socket):
         super().__init__()
+        logging.debug("file recv worker init")
         self.metadata = metadata
         self.sender = sender
         self.file_recv_socket = file_receive_socket
@@ -258,16 +259,18 @@ class ReceiveDirectTransferWorker(QObject):
         self.file_recv_socket.accept()
         temp_path: Path = TEMP_FOLDER_PATH / self.sender / self.metadata["path"]
         final_download_path: Path = get_unique_filename(
-            Path(user_settings["downloads_folder_path"])
-            / "direct"
-            / self.sender
-            / self.metadata["path"],
+            Path(user_settings["downloads_folder_path"]) / self.sender / self.metadata["path"],
         )
+        temp_path.parent.mkdir(parents=True, exist_ok=True)
+        final_download_path.parent.mkdir(parents=True, exist_ok=True)
+
         transfer_progress[temp_path] = {
             "status": TransferStatus.DOWNLOADING,
             "progress": 0,
             "percent_progress": 0.0,
         }
+
+        logging.debug(msg="Obtainig file")
         try:
             if (
                 shutil.disk_usage(user_settings["downloads_folder_path"]).free
@@ -282,6 +285,7 @@ class ReceiveDirectTransferWorker(QObject):
                         #     file_to_write.close()
                         #     self.file_recv_socket.close()
                         #     return
+                        logging.debug(msg="Obtainig file fragment")
                         file_bytes_read: bytes = self.file_recv_socket.recv(FILE_BUFFER_LEN)
                         hash.update(file_bytes_read)
                         num_bytes_read = len(file_bytes_read)
@@ -569,13 +573,16 @@ class SendFileWorker(QObject):
                 self.client_peer_socket.send(filesend_header + filemetadata_bytes)
 
                 response_type = self.client_peer_socket.recv(HEADER_TYPE_LEN).decode(FMT)
+                logging.debug(f"Received a header {response_type}")
                 if response_type == HeaderCode.DIRECT_TRANSFER_REQUEST.value:
                     response_len = int(
                         self.client_peer_socket.recv(HEADER_MSG_LEN).decode(FMT).strip()
                     )
+                    logging.debug(f"Received a len {response_len}")
                     port = int(self.client_peer_socket.recv(response_len).decode(FMT))
+                    logging.debug(f"Received a port {port}")
                     if port != -1:
-                        file_send_socket.connect(self.peer_ip, port)
+                        file_send_socket.connect((self.peer_ip, port))
                         with self.filepath.open(mode="rb") as file_to_send:
                             total_bytes_read = 0
                             msg = f"Sending file {str(self.filepath)}"
@@ -1671,18 +1678,30 @@ class Ui_DrizzleMainWindow(QWidget):
         file_recv_socket.bind((CLIENT_IP, 0))
         file_recv_socket.listen()
         file_recv_port = file_recv_socket.getsockname()[1]
+        logging.debug(f"file recv on port {file_recv_port}")
         response = str(file_recv_port).encode(FMT)
         response_header = (
-            f"{HeaderCode.DIRECT_TRANSFER_REQUEST}{len(response):<{HEADER_MSG_LEN}}".encode(FMT)
+            f"{HeaderCode.DIRECT_TRANSFER_REQUEST.value}{len(response):<{HEADER_MSG_LEN}}".encode(
+                FMT
+            )
         )
         peer_socket.send(response_header + response)
+        logging.debug("file accepted")
         recv_direct_transfer_worker = ReceiveDirectTransferWorker(
             metadata, sender, file_recv_socket
         )
-        recv_direct_transfer_thread = QThread()
-        recv_direct_transfer_worker.moveToThread(recv_direct_transfer_thread)
-        recv_direct_transfer_thread.started.connect(recv_direct_transfer_worker.run)
-        recv_direct_transfer_thread.start()
+        recv_direct_transfer_worker.signals.receiving_new_file.connect(self.new_file_progress)
+        recv_direct_transfer_worker.signals.file_progress_update.connect(self.update_file_progress)
+        recv_direct_transfer_worker.signals.file_download_complete.connect(
+            self.remove_progress_widget
+        )
+        recv_direct_transfer_worker.signals
+        recv_direct_transfer_pool = QThreadPool.globalInstance()
+        recv_direct_transfer_pool.start(recv_direct_transfer_worker)
+        # self.recv_direct_transfer_thread = QThread()
+        # self.recv_direct_transfer_worker.moveToThread(self.recv_direct_transfer_thread)
+        # self.recv_direct_transfer_thread.started.connect(self.recv_direct_transfer_worker.run)
+        # self.recv_direct_transfer_thread.start()
 
     def direct_transfer_reject(self, peer_socket: socket.socket):
         rejection = b"-1"

@@ -75,12 +75,7 @@ def receive_msg(client_socket: socket.socket) -> SocketMessage:
         username = ip_to_uname.get(notified_socket.getpeername()[0])
         if username is not None:
             uname_to_status[username] = time.time()
-            data = msgpack.packb(uname_to_status)
-            header = f"{HeaderCode.HEARTBEAT_REQUEST.value}{len(data):<{HEADER_MSG_LEN}}".encode(
-                FMT
-            )
-            notified_socket.sendall(header + data)
-        else:
+        elif message_type != HeaderCode.NEW_CONNECTION.value:
             raise RequestException(
                 msg=f"Username does not exist",
                 code=ExceptionCode.NOT_FOUND,
