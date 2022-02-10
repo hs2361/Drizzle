@@ -10,6 +10,7 @@ from datetime import datetime
 from io import BufferedReader
 from pathlib import Path
 from pprint import pformat
+from sys import platform as _platform
 
 import msgpack
 from PyQt5.QtCore import (
@@ -256,7 +257,7 @@ class ReceiveDirectTransferWorker(QRunnable):
         global user_settings
         global transfer_progress
 
-        self.file_recv_socket.accept()
+        sender, _ = self.file_recv_socket.accept()
         temp_path: Path = TEMP_FOLDER_PATH / self.sender / self.metadata["path"]
         final_download_path: Path = get_unique_filename(
             Path(user_settings["downloads_folder_path"]) / self.sender / self.metadata["path"],
@@ -286,7 +287,7 @@ class ReceiveDirectTransferWorker(QRunnable):
                         #     self.file_recv_socket.close()
                         #     return
                         logging.debug(msg="Obtainig file fragment")
-                        file_bytes_read: bytes = self.file_recv_socket.recv(FILE_BUFFER_LEN)
+                        file_bytes_read: bytes = sender.recv(FILE_BUFFER_LEN)
                         hash.update(file_bytes_read)
                         num_bytes_read = len(file_bytes_read)
                         byte_count += num_bytes_read
@@ -1360,7 +1361,10 @@ class Ui_DrizzleMainWindow(QWidget):
         sizePolicy3.setVerticalStretch(0)
         sizePolicy3.setHeightForWidth(self.txtedit_MessageInput.sizePolicy().hasHeightForWidth())
         self.txtedit_MessageInput.setSizePolicy(sizePolicy3)
-        self.txtedit_MessageInput.setMaximumSize(QSize(16777215, 80))
+        if _platform == "darwin":
+            self.txtedit_MessageInput.setMaximumSize(QSize(16777215, 60))
+        else:
+            self.txtedit_MessageInput.setMaximumSize(QSize(16777215, 80))
 
         self.horizontalLayout.addWidget(self.txtedit_MessageInput)
 
