@@ -13,6 +13,7 @@ from pprint import pformat
 from sys import platform as _platform
 
 import msgpack
+from notifypy import Notify
 from PyQt5.QtCore import (
     QCoreApplication,
     QMetaObject,
@@ -386,7 +387,7 @@ class ReceiveHandler(QObject):
     file_incoming = pyqtSignal(tuple)
     send_file_pool = QThreadPool.globalInstance()
 
-    def receive_msg(self, socket: socket.socket) -> str | None:
+    def receive_msg(self, socket: socket.socket, username: str) -> str | None:
         global client_send_socket
         global user_settings
         logging.debug(f"Receiving from {socket.getpeername()}")
@@ -512,9 +513,14 @@ class ReceiveHandler(QObject):
                 else:
                     try:
                         username = ip_to_uname[notified_socket.getpeername()[0]]
-                        message_content: str = self.receive_msg(notified_socket)
+                        message_content: str = self.receive_msg(notified_socket, username)
                         if message_content:
                             message: Message = {"sender": username, "content": message_content}
+                            notif = Notify()
+                            notif.application_name = "Drizzle"
+                            notif.title = "Message"
+                            notif.message = f"{username}: {message_content}"
+                            notif.send()
                             if messages_store.get(username) is not None:
                                 messages_store[username].append(message)
                             else:
@@ -660,7 +666,8 @@ class RequestFileWorker(QRunnable):
             offset = temp_path.stat().st_size
 
         logging.debug(f"Offset of {offset} bytes")
-        request_hash = self.file_item["hash"] is None
+        is_tiny_file = self.file_item["size"] <= FILE_BUFFER_LEN
+        request_hash = self.file_item["hash"] is None and not is_tiny_file
         file_request: FileRequest = {
             "port": file_recv_port,
             "filepath": self.file_item["path"],
@@ -731,7 +738,7 @@ class RequestFileWorker(QRunnable):
                                             file_recv_socket.close()
                                             return
                                         file_bytes_read: bytes = sender.recv(FILE_BUFFER_LEN)
-                                        if not offset:
+                                        if not offset and not is_tiny_file:
                                             hash.update(file_bytes_read)
                                         num_bytes_read = len(file_bytes_read)
                                         byte_count += num_bytes_read
@@ -758,8 +765,10 @@ class RequestFileWorker(QRunnable):
                                     file_to_write.close()
 
                                     received_hash = hash.hexdigest() if not offset else hash_str
-                                    if (request_hash and received_hash == file_header["hash"]) or (
-                                        received_hash == self.file_item["hash"]
+                                    if (
+                                        is_tiny_file
+                                        or (request_hash and received_hash == file_header["hash"])
+                                        or (received_hash == self.file_item["hash"])
                                     ):
                                         transfer_progress[temp_path][
                                             "status"
@@ -1618,6 +1627,11 @@ class Ui_DrizzleMainWindow(QWidget):
 
     def remove_progress_widget(self, path: Path) -> None:
         global progress_widgets
+        notif = Notify()
+        notif.application_name = "Drizzle"
+        notif.title = "Download complete"
+        notif.message = f"{path.name} downloaded to {user_settings['downloads_folder_path']}]"
+        notif.send()
         widget = progress_widgets.get(path)
         if widget is not None:
             self.vBoxLayout_ScrollContents.removeWidget(widget)
@@ -1642,7 +1656,7 @@ class Ui_DrizzleMainWindow(QWidget):
         global transfer_progress
         global progress_widgets
         logging.debug(f"progress_widgets: {progress_widgets}")
-        if progress_widgets.get(path) is not None:
+        if progress_widgets.get(path) is not None and transfer_progress.get(path) is not None:
             progress_widgets[path].ui.update_progress(transfer_progress[path]["progress"])
 
     def update_dir_progress(self, progress_data: tuple[Path, int]):
