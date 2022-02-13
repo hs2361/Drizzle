@@ -5,6 +5,7 @@ from pathlib import Path
 
 from PyQt5.QtCore import QCoreApplication, QMetaObject
 from PyQt5.QtWidgets import (
+    QCheckBox,
     QDialog,
     QFileDialog,
     QFormLayout,
@@ -42,7 +43,6 @@ class Ui_SettingsDialog(QDialog):
         self.formLayout.setObjectName("formLayout")
         self.label = QLabel(Dialog)
         self.label.setObjectName("label")
-        self.label.setMargin(10)
 
         self.formLayout.setWidget(0, QFormLayout.LabelRole, self.label)
 
@@ -63,7 +63,6 @@ class Ui_SettingsDialog(QDialog):
 
         self.label_2 = QLabel(Dialog)
         self.label_2.setObjectName("label_2")
-        self.label_2.setMargin(10)
 
         self.formLayout.setWidget(1, QFormLayout.LabelRole, self.label_2)
 
@@ -84,7 +83,6 @@ class Ui_SettingsDialog(QDialog):
 
         self.label_3 = QLabel(Dialog)
         self.label_3.setObjectName("label_3")
-        self.label_3.setMargin(10)
 
         self.formLayout.setWidget(2, QFormLayout.LabelRole, self.label_3)
 
@@ -100,9 +98,18 @@ class Ui_SettingsDialog(QDialog):
 
         self.label_4 = QLabel(Dialog)
         self.label_4.setObjectName("label_4")
-        self.label_4.setMargin(10)
 
         self.formLayout.setWidget(3, QFormLayout.LabelRole, self.label_4)
+
+        self.toggle = QCheckBox(Dialog)
+        self.formLayout.setWidget(4, QFormLayout.FieldRole, self.toggle)
+
+        self.label_5 = QLabel(Dialog)
+        self.label_5.setObjectName("label_5")
+
+        self.formLayout.setWidget(4, QFormLayout.LabelRole, self.label_5)
+
+        self.formLayout.setSpacing(10)
 
         self.verticalLayout.addLayout(self.formLayout)
 
@@ -153,8 +160,13 @@ class Ui_SettingsDialog(QDialog):
         self.btn_Cancel.setText(QCoreApplication.translate("Dialog", "Cancel", None))
         self.btn_Apply.setText(QCoreApplication.translate("Dialog", "Apply", None))
 
+        self.label_5.setText(
+            QCoreApplication.translate("Dialog", "Show Desktop Notifications", None)
+        )
+
         self.btn_Apply.clicked.connect(lambda: self.apply_settings(Dialog))
         self.btn_Cancel.clicked.connect(Dialog.close)
+        self.toggle.setChecked(self.settings["show_notifications"])
 
     # retranslateUi
     def apply_settings(self, Dialog):
@@ -163,6 +175,7 @@ class Ui_SettingsDialog(QDialog):
         new_settings["share_folder_path"] = self.le_SharePath.text()
         new_settings["server_ip"] = self.le_ServerIP.text()
         new_settings["uname"] = self.le_Username.text()
+        new_settings["show_notifications"] = self.toggle.isChecked()
 
         with USER_SETTINGS_PATH.open(mode="w") as user_settings_file:
             json.dump(new_settings, user_settings_file)

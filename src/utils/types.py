@@ -102,6 +102,7 @@ class UserSettings(TypedDict):
     server_ip: str
     share_folder_path: str
     downloads_folder_path: str
+    show_notifications: bool
 
 
 class Message(TypedDict):

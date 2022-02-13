@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import os
 import pickle
 import select
 import shutil
@@ -356,11 +357,15 @@ class HandleFileRequestWorker(QRunnable):
                 file_send_socket.send(filesend_header + filemetadata_bytes)
 
                 total_bytes_read = 0
-                file_to_send.seek(self.resume_offset)
-                while total_bytes_read != filemetadata["size"] - self.resume_offset:
-                    bytes_read = file_to_send.read(FILE_BUFFER_LEN)
-                    num_bytes = file_send_socket.send(bytes_read)
-                    total_bytes_read += num_bytes
+
+                if os.name == "posix":
+                    file_send_socket.sendfile(file_to_send, self.resume_offset)
+                else:
+                    file_to_send.seek(self.resume_offset)
+                    while total_bytes_read != filemetadata["size"] - self.resume_offset:
+                        bytes_read = file_to_send.read(FILE_BUFFER_LEN)
+                        num_bytes = file_send_socket.send(bytes_read)
+                        total_bytes_read += num_bytes
                 print("\nFile Sent")
             if self.request_hash:
                 update_hash_params: UpdateHashParams = {
@@ -516,11 +521,12 @@ class ReceiveHandler(QObject):
                         message_content: str = self.receive_msg(notified_socket, username)
                         if message_content:
                             message: Message = {"sender": username, "content": message_content}
-                            notif = Notify()
-                            notif.application_name = "Drizzle"
-                            notif.title = "Message"
-                            notif.message = f"{username}: {message_content}"
-                            notif.send()
+                            if user_settings["show_notifications"] and username != selected_uname:
+                                notif = Notify()
+                                notif.application_name = "Drizzle"
+                                notif.title = "Message"
+                                notif.message = f"{username}: {message_content}"
+                                notif.send()
                             if messages_store.get(username) is not None:
                                 messages_store[username].append(message)
                             else:
@@ -602,14 +608,17 @@ class SendFileWorker(QObject):
                                     {"sender": self_uname, "content": msg}
                                 ]
                             self.sending_file.emit({"sender": self_uname, "content": msg})
-                            while total_bytes_read != filemetadata["size"]:
-                                logging.debug(
-                                    f'sending file bytes {total_bytes_read} of {filemetadata["size"]}'
-                                )
-                                bytes_read = file_to_send.read(FILE_BUFFER_LEN)
-                                file_send_socket.sendall(bytes_read)
-                                num_bytes = len(bytes_read)
-                                total_bytes_read += num_bytes
+                            if os.name == "posix":
+                                file_send_socket.sendfile(file_to_send)
+                            else:
+                                while total_bytes_read != filemetadata["size"]:
+                                    logging.debug(
+                                        f'sending file bytes {total_bytes_read} of {filemetadata["size"]}'
+                                    )
+                                    bytes_read = file_to_send.read(FILE_BUFFER_LEN)
+                                    file_send_socket.sendall(bytes_read)
+                                    num_bytes = len(bytes_read)
+                                    total_bytes_read += num_bytes
                             print("\nFile Sent")
             except Exception as e:
                 logging.error(f"Direct transfer failed: {e}")
@@ -833,6 +842,7 @@ class Ui_DrizzleMainWindow(QWidget):
         worker.dump_progress_data()
 
     def __init__(self, MainWindow):
+        self.MainWindow = MainWindow
         super(Ui_DrizzleMainWindow, self).__init__()
         try:
             global user_settings
@@ -1163,7 +1173,7 @@ class Ui_DrizzleMainWindow(QWidget):
             )
         uname_to_status = new_status
 
-    def on_user_selected(self):
+    def on_user_selection_changed(self):
         global selected_uname
         global server_socket_mutex
 
@@ -1173,12 +1183,12 @@ class Ui_DrizzleMainWindow(QWidget):
             username: str = item.data(Qt.UserRole)
             selected_uname = username
             self.render_messages(messages_store.get(selected_uname))
-            self.btn_SendMessage.setEnabled(
+            enable_if_online = (
                 True if time.time() - uname_to_status[username] < ONLINE_TIMEOUT else False
             )
-            self.btn_SendFile.setEnabled(
-                True if time.time() - uname_to_status[username] < ONLINE_TIMEOUT else False
-            )
+            self.btn_SendMessage.setEnabled(enable_if_online)
+            self.btn_SendFile.setEnabled(enable_if_online)
+            self.btn_RefreshFileTree.setEnabled(enable_if_online)
             if time.time() - uname_to_status[username] > ONLINE_TIMEOUT:
                 self.file_tree.clear()
                 self.file_tree.headerItem().setText(0, "Selected user is offline")
@@ -1214,6 +1224,12 @@ class Ui_DrizzleMainWindow(QWidget):
                     self.user_settings,
                 )
                 error_dialog.exec()
+        else:
+            self.btn_SendMessage.setEnabled(False)
+            self.btn_SendFile.setEnabled(False)
+            self.btn_RefreshFileTree.setEnabled(False)
+            self.file_tree.clear()
+            self.file_tree.headerItem().setText(0, "No user selected")
 
     def setupUi(self, MainWindow):
         if not MainWindow.objectName():
@@ -1279,10 +1295,27 @@ class Ui_DrizzleMainWindow(QWidget):
         self.Content.setObjectName("Content")
         self.Files = QVBoxLayout()
         self.Files.setObjectName("Files")
-        self.label = QLabel(self.centralwidget)
-        self.label.setObjectName("label")
 
-        self.Files.addWidget(self.label)
+        self.hl_BrowseFilesHeader = QHBoxLayout()
+
+        self.label_BrowseFiles = QLabel(self.centralwidget)
+        self.label_BrowseFiles.setObjectName("label")
+
+        self.btn_RefreshFileTree = QPushButton(self.centralwidget)
+        sizePolicy_RefreshBtn = QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        sizePolicy_RefreshBtn.setHorizontalStretch(0)
+        sizePolicy_RefreshBtn.setVerticalStretch(0)
+        self.btn_RefreshFileTree.setSizePolicy(sizePolicy_RefreshBtn)
+        self.btn_RefreshFileTree.setMinimumSize(QSize(30, 30))
+        self.btn_RefreshFileTree.setMaximumSize(QSize(30, 30))
+        self.btn_RefreshFileTree.setEnabled(False)
+        self.btn_RefreshFileTree.clicked.connect(self.on_user_selection_changed)
+
+        self.hl_BrowseFilesHeader.addWidget(self.label_BrowseFiles)
+        self.hl_BrowseFilesHeader.addWidget(self.btn_RefreshFileTree)
+        self.hl_BrowseFilesHeader.addItem(self.horizontalSpacer)
+
+        self.Files.addLayout(self.hl_BrowseFilesHeader)
 
         self.file_tree = QTreeWidget(self.centralwidget)
         # self.file_tree.itemClicked.connect(self.on_file_item_selected)
@@ -1334,7 +1367,7 @@ class Ui_DrizzleMainWindow(QWidget):
 
         self.lw_OnlineStatus = QListWidget(self.centralwidget)
         self.lw_OnlineStatus.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.lw_OnlineStatus.itemSelectionChanged.connect(self.on_user_selected)
+        self.lw_OnlineStatus.itemSelectionChanged.connect(self.on_user_selection_changed)
         self.icon_Online = QIcon()
         self.icon_Online.addFile("ui/res/earth.png", QSize(), QIcon.Normal, QIcon.Off)
 
@@ -1460,7 +1493,9 @@ class Ui_DrizzleMainWindow(QWidget):
         self.btn_AddFiles.setText(QCoreApplication.translate("MainWindow", "Add Files", None))
         self.btn_AddFolder.setText(QCoreApplication.translate("MainWindow", "Add Folder", None))
         self.btn_Settings.setText(QCoreApplication.translate("MainWindow", "Settings", None))
-        self.label.setText(QCoreApplication.translate("MainWindow", "Browse Files", None))
+        self.label_BrowseFiles.setText(
+            QCoreApplication.translate("MainWindow", "Browse Files", None)
+        )
 
         self.btn_Settings.clicked.connect(lambda: self.open_settings(MainWindow))
 
@@ -1484,6 +1519,7 @@ class Ui_DrizzleMainWindow(QWidget):
         self.btn_SendMessage.setText(QCoreApplication.translate("MainWindow", "Send Message", None))
         self.btn_SendFile.setText(QCoreApplication.translate("MainWindow", "Send File", None))
         self.label_12.setText(QCoreApplication.translate("MainWindow", "Downloading:", None))
+        self.btn_RefreshFileTree.setText(QCoreApplication.translate("MainWindow", "⟳", None))
 
     def open_settings(self, MainWindow):
         settings_dialog = QDialog(MainWindow)
@@ -1627,11 +1663,12 @@ class Ui_DrizzleMainWindow(QWidget):
 
     def remove_progress_widget(self, path: Path) -> None:
         global progress_widgets
-        notif = Notify()
-        notif.application_name = "Drizzle"
-        notif.title = "Download complete"
-        notif.message = f"{path.name} downloaded to {user_settings['downloads_folder_path']}]"
-        notif.send()
+        if user_settings["show_notifications"]:
+            notif = Notify()
+            notif.application_name = "Drizzle"
+            notif.title = "Download complete"
+            notif.message = f"{path.name} downloaded to {user_settings['downloads_folder_path']}"
+            notif.send()
         widget = progress_widgets.get(path)
         if widget is not None:
             self.vBoxLayout_ScrollContents.removeWidget(widget)
@@ -1675,7 +1712,7 @@ class Ui_DrizzleMainWindow(QWidget):
         global ip_to_uname
         metadata, peer_socket = data
         username = ip_to_uname[peer_socket.getpeername()[0]]
-        message_box = QMessageBox(self)
+        message_box = QMessageBox(self.MainWindow)
         message_box.setIcon(QMessageBox.Question)
         message_box.setWindowTitle("File incoming")
         message_box.setText(

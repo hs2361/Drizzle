@@ -81,6 +81,14 @@ class Ui_FileProgressWidget(QWidget):
         self.btn_Toggle = QPushButton(Widget)
         self.btn_Toggle.setObjectName("pushButton")
         self.btn_Toggle.clicked.connect(self.toggle_download)  # type: ignore
+        sizePolicy2 = QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        sizePolicy2.setHorizontalStretch(0)
+        sizePolicy2.setVerticalStretch(0)
+        # sizePolicy2.setHeightForWidth(self.btn_Toggle.sizePolicy().hasHeightForWidth())
+        self.btn_Toggle.setSizePolicy(sizePolicy2)
+        self.btn_Toggle.setMinimumSize(QSize(40, 40))
+        self.btn_Toggle.setMaximumSize(QSize(40, 40))
+
         self.horizontalLayout_2.addWidget(self.btn_Toggle)
 
         self.horizontalLayout.addLayout(self.horizontalLayout_2)

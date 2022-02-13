@@ -27,7 +27,10 @@ class MainWindow(QMainWindow):
         super(MainWindow, self).__init__()
         self.center()
         try:
-            self.user_settings: UserSettings = {"downloads_folder_path": str(RECV_FOLDER_PATH)}
+            self.user_settings: UserSettings = {
+                "downloads_folder_path": str(RECV_FOLDER_PATH),
+                "show_notifications": True,
+            }
             with USER_SETTINGS_PATH.open(mode="r") as user_settings_file:
                 self.user_settings = json.load(user_settings_file)
             from ui.DrizzleMainWindow import Ui_DrizzleMainWindow
