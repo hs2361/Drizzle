@@ -61,18 +61,17 @@ def request_ip(uname: str, client_send_socket: socket.socket) -> str | None:
     res_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
     logging.debug(msg=f"Response type: {res_type}")
     response_length = int(client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip())
-    peer_ip_bytes = client_send_socket.recv(response_length)
+    res_bytes = client_send_socket.recv(response_length)
+    logging.debug(msg=f"peer ip response {res_bytes}")
     if res_type == HeaderCode.REQUEST_IP.value:
-        return peer_ip_bytes.decode(FMT)
+        return res_bytes.decode(FMT)
     elif res_type == HeaderCode.ERROR.value:
-        res_len = int(client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip())
-        res = client_send_socket.recv(res_len)
         error: RequestException = msgpack.unpackb(
-            res,
+            res_bytes,
             object_hook=RequestException.from_dict,
             raw=False,
         )
-        logging.error(msg=error)
+        logging.error(msg=error.msg)
         return None
     else:
         logging.error(f"Invalid message type in header: {res_type}")

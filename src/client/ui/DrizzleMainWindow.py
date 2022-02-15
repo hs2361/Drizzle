@@ -144,6 +144,21 @@ dir_progress: dict[Path, DirProgress] = {}
 user_settings: UserSettings = {}
 uname_to_ip: dict[str, str] = {}
 ip_to_uname: dict[str, str] = {}
+error_dialog_is_open = False
+
+
+def show_error_dialog(error_msg: str, show_settings: bool = False):
+    global user_settings
+    global error_dialog_is_open
+
+    error_dialog = QDialog()
+    error_dialog.ui = Ui_ErrorDialog(
+        error_dialog, error_msg, user_settings if show_settings else None
+    )
+    if not error_dialog_is_open:
+        error_dialog_is_open = True
+        error_dialog.exec()
+        error_dialog_is_open = False
 
 
 class ServerMutex(QMutex):
@@ -239,11 +254,12 @@ class HeartbeatWorker(QObject):
                 logging.error(
                     f"Server sent invalid message type in header: {type}",
                 )
-                error_dialog = QDialog()
-                error_dialog.ui = Ui_ErrorDialog(
-                    error_dialog, f"Cannot establish connection with server", self.settings
+                sys.exit(
+                    show_error_dialog(
+                        "An error occurred while communicating with the server.\nTry reconnecting or check the server logs.",
+                        True,
+                    )
                 )
-                sys.exit(error_dialog.exec())
 
 
 class ReceiveDirectTransferWorker(QRunnable):
@@ -259,22 +275,22 @@ class ReceiveDirectTransferWorker(QRunnable):
         global user_settings
         global transfer_progress
 
-        sender, _ = self.file_recv_socket.accept()
-        temp_path: Path = TEMP_FOLDER_PATH / self.sender / self.metadata["path"]
-        final_download_path: Path = get_unique_filename(
-            Path(user_settings["downloads_folder_path"]) / self.sender / self.metadata["path"],
-        )
-        temp_path.parent.mkdir(parents=True, exist_ok=True)
-        final_download_path.parent.mkdir(parents=True, exist_ok=True)
-
-        transfer_progress[temp_path] = {
-            "status": TransferStatus.DOWNLOADING,
-            "progress": 0,
-            "percent_progress": 0.0,
-        }
-
-        logging.debug(msg="Obtainig file")
         try:
+            sender, _ = self.file_recv_socket.accept()
+            temp_path: Path = TEMP_FOLDER_PATH / self.sender / self.metadata["path"]
+            final_download_path: Path = get_unique_filename(
+                Path(user_settings["downloads_folder_path"]) / self.sender / self.metadata["path"],
+            )
+            temp_path.parent.mkdir(parents=True, exist_ok=True)
+            final_download_path.parent.mkdir(parents=True, exist_ok=True)
+
+            transfer_progress[temp_path] = {
+                "status": TransferStatus.DOWNLOADING,
+                "progress": 0,
+                "percent_progress": 0.0,
+            }
+
+            logging.debug(msg="Obtainig file")
             if (
                 shutil.disk_usage(user_settings["downloads_folder_path"]).free
                 > self.metadata["size"]
@@ -311,8 +327,12 @@ class ReceiveDirectTransferWorker(QRunnable):
                         logging.error(
                             msg=f"Failed integrity check for file {self.metadata['path']}"
                         )
+                        show_error_dialog(
+                            f"Failed integrity check for file {self.metadata['path']}."
+                        )
         except Exception as e:
-            logging.error(msg=f"Failed to receive file: {e}")
+            logging.exception(msg=f"Failed to receive file: {e}")
+            show_error_dialog(f"Failed to receive file:\n{e}")
         finally:
             self.file_recv_socket.close()
 
@@ -328,30 +348,28 @@ class HandleFileRequestWorker(QRunnable):
         self.resume_offset = resume_offset
 
     def run(self) -> None:
-        file_send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        file_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        # file_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
-        file_send_socket.connect(self.requester)
-        hash = ""
+        try:
+            file_send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            file_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            # file_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
+            file_send_socket.connect(self.requester)
+            hash = ""
 
-        if self.request_hash:
-            hash = get_file_hash(str(self.filepath))
+            if self.request_hash:
+                hash = get_file_hash(str(self.filepath))
 
-        filemetadata: FileMetadata = {
-            "path": str(self.filepath).removeprefix(user_settings["share_folder_path"] + "/"),
-            "size": self.filepath.stat().st_size,
-            "hash": hash if self.request_hash else None,
-        }
+            filemetadata: FileMetadata = {
+                "path": str(self.filepath).removeprefix(user_settings["share_folder_path"] + "/"),
+                "size": self.filepath.stat().st_size,
+                "hash": hash if self.request_hash else None,
+            }
 
-        logging.debug(filemetadata)
-        filemetadata_bytes = msgpack.packb(filemetadata)
-        filesend_header = (
-            f"{HeaderCode.DIRECT_TRANSFER.value}{len(filemetadata_bytes):<{HEADER_MSG_LEN}}".encode(
+            logging.debug(filemetadata)
+            filemetadata_bytes = msgpack.packb(filemetadata)
+            filesend_header = f"{HeaderCode.DIRECT_TRANSFER.value}{len(filemetadata_bytes):<{HEADER_MSG_LEN}}".encode(
                 FMT
             )
-        )
 
-        try:
             with self.filepath.open(mode="rb") as file_to_send:
                 logging.debug(f"Sending file {filemetadata['path']} to {self.requester}")
                 file_send_socket.send(filesend_header + filemetadata_bytes)
@@ -383,6 +401,7 @@ class HandleFileRequestWorker(QRunnable):
                 server_socket_mutex.unlock("handle file request worker")
         except Exception as e:
             logging.exception(f"File Sending failed: {e}")
+            show_error_dialog(f"File Sending failed.\n{e}")
         finally:
             file_send_socket.close()
 
@@ -435,9 +454,11 @@ class ReceiveHandler(QObject):
                             return f"Received file {write_path.name}"
                         except Exception as e:
                             logging.error(e)
+                            # TODO: add status bar message here, show error in progress bar
                             return None
                     except Exception as e:
                         logging.error(e)
+                        # TODO: add status bar message here, show error in progress bar
                         return None
                 case HeaderCode.FILE_REQUEST.value:
                     req_header_len = int(socket.recv(HEADER_MSG_LEN).decode(FMT))
@@ -454,7 +475,6 @@ class ReceiveHandler(QObject):
                             file_req_header["request_hash"],
                             file_req_header["resume_offset"],
                         )
-                        # send_file_pool.setMaxThreadCount(4)
                         self.send_file_pool.start(send_file_handler)
                         return None
                     elif requested_file_path.is_dir():
@@ -514,6 +534,7 @@ class ReceiveHandler(QObject):
                         connected.append(peer_socket)
                     except Exception as e:
                         logging.exception(msg=e)
+                        show_error_dialog("Error occured when obtaining peer data.\n{e}")
                         break
                 else:
                     try:
@@ -539,6 +560,7 @@ class ReceiveHandler(QObject):
                             except ValueError:
                                 logging.info("already removed")
                         logging.error(msg=f"Exception: {e.msg}")
+                        show_error_dialog(f"Error occurred when communicating with peer.\n{e.msg}")
                         break
 
 
@@ -621,12 +643,14 @@ class SendFileWorker(QObject):
                                     total_bytes_read += num_bytes
                             print("\nFile Sent")
             except Exception as e:
-                logging.error(f"Direct transfer failed: {e}")
+                logging.exception(f"Direct transfer failed: {e}")
+                show_error_dialog(f"Failed to send file.\n{e}")
             finally:
                 file_send_socket.close()
 
         else:
             logging.error(f"{self.filepath} not found")
+            show_error_dialog("Selected file does not exist.")
             print(
                 f"\nUnable to perform send request, ensure that the file is available in {user_settings['share_folder_path']}"
             )
@@ -658,39 +682,41 @@ class RequestFileWorker(QRunnable):
     def run(self) -> None:
         global transfer_progress
         global user_settings
-        # logging.debug(f"Requesting file, progress is {transfer_progress}")
-        self.client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.client_peer_socket.connect((self.peer_ip, CLIENT_RECV_PORT))
-        file_recv_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        file_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        # file_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
-        file_recv_socket.bind((CLIENT_IP, 0))
-        file_recv_socket.listen()
-        file_recv_port = file_recv_socket.getsockname()[1]
-
-        offset = 0
-        temp_path: Path = TEMP_FOLDER_PATH / self.sender / self.file_item["path"]
-        logging.debug(f"Using temp path {str(temp_path)}")
-        if temp_path.exists():
-            offset = temp_path.stat().st_size
-
-        logging.debug(f"Offset of {offset} bytes")
-        is_tiny_file = self.file_item["size"] <= FILE_BUFFER_LEN
-        request_hash = self.file_item["hash"] is None and not is_tiny_file
-        file_request: FileRequest = {
-            "port": file_recv_port,
-            "filepath": self.file_item["path"],
-            "request_hash": request_hash,
-            "resume_offset": offset,
-        }
-
-        file_req_bytes = msgpack.packb(file_request)
-        file_req_header = (
-            f"{HeaderCode.FILE_REQUEST.value}{len(file_req_bytes):<{HEADER_MSG_LEN}}".encode(FMT)
-        )
-        self.client_peer_socket.send(file_req_header + file_req_bytes)
 
         try:
+            # logging.debug(f"Requesting file, progress is {transfer_progress}")
+            self.client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.client_peer_socket.connect((self.peer_ip, CLIENT_RECV_PORT))
+            file_recv_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            file_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            # file_recv_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
+            file_recv_socket.bind((CLIENT_IP, 0))
+            file_recv_socket.listen()
+            file_recv_port = file_recv_socket.getsockname()[1]
+
+            offset = 0
+            temp_path: Path = TEMP_FOLDER_PATH / self.sender / self.file_item["path"]
+            logging.debug(f"Using temp path {str(temp_path)}")
+            if temp_path.exists():
+                offset = temp_path.stat().st_size
+
+            logging.debug(f"Offset of {offset} bytes")
+            is_tiny_file = self.file_item["size"] <= FILE_BUFFER_LEN
+            request_hash = self.file_item["hash"] is None and not is_tiny_file
+            file_request: FileRequest = {
+                "port": file_recv_port,
+                "filepath": self.file_item["path"],
+                "request_hash": request_hash,
+                "resume_offset": offset,
+            }
+
+            file_req_bytes = msgpack.packb(file_request)
+            file_req_header = (
+                f"{HeaderCode.FILE_REQUEST.value}{len(file_req_bytes):<{HEADER_MSG_LEN}}".encode(
+                    FMT
+                )
+            )
+            self.client_peer_socket.send(file_req_header + file_req_bytes)
             res_type = self.client_peer_socket.recv(HEADER_TYPE_LEN).decode(FMT)
             logging.debug(f"received header type {res_type} from sender")
             match res_type:
@@ -796,15 +822,22 @@ class RequestFileWorker(QRunnable):
                                         logging.error(
                                             msg=f"Failed integrity check for file {file_header['path']}"
                                         )
+                                        show_error_dialog(
+                                            f"Failed integrity check for file {file_header['path']}.\nTry downloading it again."
+                                        )
                                 except Exception as e:
                                     logging.exception(e)
-                                    print("File received but failed to save")
+                                    show_error_dialog(f"File received but failed to save.\n{e}")
                             except Exception as e:
                                 logging.exception(e)
-                                print("Unable to write file")
+                                show_error_dialog("Unable to write file.\n{e}")
                         else:
                             logging.error(
                                 msg=f"Not enough space to receive file {file_header['path']}, {file_header['size']}"
+                            )
+                            show_error_dialog(
+                                f"Insufficient storage. You need at least {convert_size(file_header['size'])} of space to receive {file_header['path']}.",
+                                True,
                             )
                     else:
                         raise RequestException(
@@ -828,6 +861,8 @@ class RequestFileWorker(QRunnable):
                     raise err
         except Exception as e:
             logging.exception(e)
+            show_error_dialog(f"Error occurred when requesting file.\n{e}")
+
         finally:
             self.client_peer_socket.close()
 
@@ -902,14 +937,9 @@ class Ui_DrizzleMainWindow(QWidget):
                 )
                 if exception.code == ExceptionCode.USER_EXISTS:
                     logging.error(msg=exception.msg)
-                    error_dialog = QDialog()
-                    error_dialog.ui = Ui_ErrorDialog(
-                        error_dialog,
-                        "Sorry that username is taken, please choose another one",
-                        self.user_settings,
+                    show_error_dialog(
+                        "Sorry that username is taken, please choose another one", True
                     )
-                    error_dialog.exec()
-
                 else:
                     logging.fatal(msg=exception.msg)
                     print("\nSorry something went wrong")
@@ -941,13 +971,12 @@ class Ui_DrizzleMainWindow(QWidget):
 
         except Exception as e:
             logging.error(f"Could not connect to server: {e}")
-            error_dialog = QDialog()
-            error_dialog.ui = Ui_ErrorDialog(
-                error_dialog,
-                f"Could not connect to server: {e}\nEnsure that the server is online and you have entered the correct server IP.",
-                self.user_settings,
+            sys.exit(
+                show_error_dialog(
+                    f"Could not connect to server: {e}\nEnsure that the server is online and you have entered the correct server IP.",
+                    True,
+                )
             )
-            sys.exit(error_dialog.exec())
 
         self.setupUi(MainWindow)
 
@@ -1003,10 +1032,12 @@ class Ui_DrizzleMainWindow(QWidget):
                 self.render_messages(messages_store[selected_uname])
             except Exception as e:
                 logging.error(f"Failed to send message: {e}")
+                show_error_dialog(f"Failed to send message.\n{e}")
             finally:
                 self.txtedit_MessageInput.clear()
         else:
             logging.error(f"Could not find ip for user {selected_uname}")
+            show_error_dialog(f"This user has gone offline or does not exist. Try again later")
 
     def closeEvent(self, event) -> None:
         self.heartbeat_thread.exit()
@@ -1062,8 +1093,8 @@ class Ui_DrizzleMainWindow(QWidget):
             server_socket_mutex.unlock("download files")
             if peer_ip is None:
                 logging.error(f"Selected user {selected_uname} does not exist")
+                show_error_dialog(f"Selected user {selected_uname} does not exist")
                 return
-                # TODO: add error dialog
 
             transfer_progress[TEMP_FOLDER_PATH / selected_uname / selected_item["path"]] = {
                 "progress": 0,
@@ -1216,14 +1247,8 @@ class Ui_DrizzleMainWindow(QWidget):
                     print("No files found")
             else:
                 server_socket_mutex.unlock("file search")
-                logging.error(f"Error occured while searching for files, {response_header_type}")
-                error_dialog = QDialog()
-                error_dialog.ui = Ui_ErrorDialog(
-                    error_dialog,
-                    f"Error occured while searching for files, {response_header_type}",
-                    self.user_settings,
-                )
-                error_dialog.exec()
+                logging.error(f"Error occured while fetching files data, {response_header_type}")
+                show_error_dialog(f"Error occured while fetching files data")
         else:
             self.btn_SendMessage.setEnabled(False)
             self.btn_SendFile.setEnabled(False)
@@ -1490,8 +1515,8 @@ class Ui_DrizzleMainWindow(QWidget):
                 "MainWindow", f"Drizzle / {self.user_settings['uname']}", None
             )
         )
-        self.btn_AddFiles.setText(QCoreApplication.translate("MainWindow", "Add Files", None))
-        self.btn_AddFolder.setText(QCoreApplication.translate("MainWindow", "Add Folder", None))
+        self.btn_AddFiles.setText(QCoreApplication.translate("MainWindow", "Import Files", None))
+        self.btn_AddFolder.setText(QCoreApplication.translate("MainWindow", "Import Folder", None))
         self.btn_Settings.setText(QCoreApplication.translate("MainWindow", "Settings", None))
         self.label_BrowseFiles.setText(
             QCoreApplication.translate("MainWindow", "Browse Files", None)
@@ -1611,6 +1636,12 @@ class Ui_DrizzleMainWindow(QWidget):
         relative_path = path.relative_to(TEMP_FOLDER_PATH)
         uname = str(relative_path.parents[-2])
         peer_ip = request_ip(uname, client_send_socket)
+        logging.debug(msg=f"resuming for peer ip {peer_ip}")
+        if peer_ip is None:
+            logging.debug(msg=f"\nUser with username {uname} not found")
+            show_error_dialog(f"Owner of this item is not available at the moment")
+            # TODO: auto switch progress bar to paused state
+            return
         pool = QThreadPool.globalInstance()
         if path.is_file():
             file_item: DirData = {
@@ -1622,14 +1653,12 @@ class Ui_DrizzleMainWindow(QWidget):
                 "compression": CompressionMethod.NONE,
                 "children": None,
             }
-            if peer_ip is not None:
-                transfer_progress[path]["status"] = TransferStatus.DOWNLOADING
-                worker = RequestFileWorker(file_item, peer_ip, uname, None)
-                worker.signals.file_progress_update.connect(self.update_file_progress)
-                worker.signals.file_download_complete.connect(self.remove_progress_widget)
-                pool.start(worker)
-            else:
-                print(f"\nUser with username {uname} not found")
+
+            transfer_progress[path]["status"] = TransferStatus.DOWNLOADING
+            worker = RequestFileWorker(file_item, peer_ip, uname, None)
+            worker.signals.file_progress_update.connect(self.update_file_progress)
+            worker.signals.file_download_complete.connect(self.remove_progress_widget)
+            pool.start(worker)
         elif path.is_dir():
             paused_items: list[DirData] = []
             for (pathname, progress) in transfer_progress.items():

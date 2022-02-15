@@ -19,7 +19,7 @@ from utils.types import UserSettings
 
 
 class Ui_ErrorDialog(QDialog):
-    def __init__(self, Dialog: QDialog, error_log: str, settings: UserSettings):
+    def __init__(self, Dialog: QDialog, error_log: str, settings: UserSettings | None):
         super(Ui_ErrorDialog, self).__init__()
         self.error_log = error_log
         self.settings = settings
@@ -64,14 +64,15 @@ class Ui_ErrorDialog(QDialog):
 
         self.horizontalLayout.addItem(self.horizontalSpacer)
 
-        self.btn_Settings = QPushButton(Dialog)
-        self.btn_Settings.setObjectName("pushButton_2")
+        if self.settings is not None:
+            self.btn_Settings = QPushButton(Dialog)
+            self.btn_Settings.setObjectName("pushButton_2")
+            self.horizontalLayout.addWidget(self.btn_Settings)
 
         self.btn_Close = QPushButton(Dialog)
         self.btn_Close.setObjectName("pushButton")
 
         self.horizontalLayout.addWidget(self.btn_Close)
-        self.horizontalLayout.addWidget(self.btn_Settings)
 
         self.verticalLayout.addLayout(self.horizontalLayout)
 
@@ -93,11 +94,13 @@ class Ui_ErrorDialog(QDialog):
                 None,
             )
         )
-        self.btn_Settings.setText(QCoreApplication.translate("Dialog", "Open Settings", None))
 
         self.btn_Close.setText(QCoreApplication.translate("Dialog", "Close", None))
         self.btn_Close.clicked.connect(Dialog.close)
-        self.btn_Settings.clicked.connect(self.open_settings)
+
+        if self.settings is not None:
+            self.btn_Settings.setText(QCoreApplication.translate("Dialog", "Open Settings", None))
+            self.btn_Settings.clicked.connect(self.open_settings)
 
     def open_settings(self):
         settings_dialog = QDialog()
