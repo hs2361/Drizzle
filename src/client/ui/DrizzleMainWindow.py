@@ -568,6 +568,8 @@ class ReceiveHandler(QObject):
                         logging.error(msg=f"Exception: {e.msg}")
                         # show_error_dialog(f"Error occurred when communicating with peer.\n{e.msg}")
                         break
+                    except Exception as e:
+                        logging.exception(f"Error communicating with peer: {e}")
 
 
 class SendFileWorker(QObject):
@@ -869,7 +871,6 @@ class RequestFileWorker(QRunnable):
         except Exception as e:
             logging.exception(e)
             show_error_dialog(f"Error occurred when requesting file.\n{e}")
-
         finally:
             self.client_peer_socket.close()
 
