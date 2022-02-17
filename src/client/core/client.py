@@ -303,12 +303,12 @@ def send_handler() -> None:
                 # if searchquery:
                 # searchquery_bytes = searchquery.encode(FMT)
                 searchquery_bytes = b" "
-                search_header = f"{HeaderCode.FILE_SEARCH.value}{len(searchquery_bytes):<{HEADER_MSG_LEN}}".encode(
+                search_header = f"{HeaderCode.FILE_BROWSE.value}{len(searchquery_bytes):<{HEADER_MSG_LEN}}".encode(
                     FMT
                 )
                 client_send_socket.send(search_header + searchquery_bytes)
                 response_header_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
-                if response_header_type == HeaderCode.FILE_SEARCH.value:
+                if response_header_type == HeaderCode.FILE_BROWSE.value:
                     response_len = int(client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip())
                     browse_files: list[DBData] = msgpack.unpackb(
                         recvall(client_send_socket, response_len),

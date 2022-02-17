@@ -6,6 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
+from pprint import pprint
 
 import msgpack
 from tinydb import Query, TinyDB
@@ -13,9 +14,16 @@ from tinydb import Query, TinyDB
 sys.path.append("../")
 from utils.constants import FMT, HEADER_MSG_LEN, HEADER_TYPE_LEN, SERVER_RECV_PORT
 from utils.exceptions import ExceptionCode, RequestException
-from utils.helpers import update_file_hash
+from utils.helpers import item_search, update_file_hash
 from utils.socket_functions import get_self_ip, recvall
-from utils.types import DBData, DirData, HeaderCode, SocketMessage, UpdateHashParams
+from utils.types import (
+    DBData,
+    DirData,
+    HeaderCode,
+    ItemSearchResult,
+    SocketMessage,
+    UpdateHashParams,
+)
 
 IP = get_self_ip()
 
@@ -64,6 +72,7 @@ def receive_msg(client_socket: socket.socket) -> SocketMessage:
             HeaderCode.REQUEST_IP.value,
             HeaderCode.REQUEST_UNAME.value,
             HeaderCode.SHARE_DATA.value,
+            HeaderCode.FILE_BROWSE.value,
             HeaderCode.FILE_SEARCH.value,
             HeaderCode.UPDATE_HASH.value,
             HeaderCode.HEARTBEAT_REQUEST.value,
@@ -248,7 +257,7 @@ def read_handler(notified_socket: socket.socket) -> None:
                             msg=f"Username does not exist",
                             code=ExceptionCode.NOT_FOUND,
                         )
-                case HeaderCode.FILE_SEARCH:
+                case HeaderCode.FILE_BROWSE:
                     username = ip_to_uname.get(notified_socket.getpeername()[0])
                     user_exists = uname_to_ip.get(request["query"].decode(FMT), False)
                     # if username != request["query"] and user_exists:
@@ -258,11 +267,11 @@ def read_handler(notified_socket: socket.socket) -> None:
                             User.uname == request["query"].decode(FMT)
                         )
                         print(browse_files)
-                        browse_files_bytes = msgpack.packb(browse_files)
-                        browse_files_header = f"{HeaderCode.FILE_SEARCH.value}{len(browse_files_bytes):<{HEADER_MSG_LEN}}".encode(
+                        search_result_bytes = msgpack.packb(browse_files)
+                        search_result_header = f"{HeaderCode.FILE_BROWSE.value}{len(search_result_bytes):<{HEADER_MSG_LEN}}".encode(
                             FMT
                         )
-                        notified_socket.sendall(browse_files_header + browse_files_bytes)
+                        notified_socket.sendall(search_result_header + search_result_bytes)
                     else:
                         raise RequestException(
                             msg=f"User does not exist, {request['query'].decode(FMT)}",
@@ -273,7 +282,29 @@ def read_handler(notified_socket: socket.socket) -> None:
                     #         msg=f"Cannot search for own files",
                     #         code=ExceptionCode.BAD_REQUEST,
                     #     )
+                case HeaderCode.FILE_SEARCH:
+                    username = ip_to_uname.get(notified_socket.getpeername()[0])
+                    search_query = request["query"].decode(FMT).strip()
+                    # if username != request["query"] and user_exists:
+                    if username is not None and search_query:
+                        data: list[DBData] = drizzle_db.all()
+                        result: list[ItemSearchResult] = []
+                        for user in data:
+                            dir: list[DirData] = user["share"]
+                            item_search(dir, result, search_query, user["uname"])
+                        logging.debug(f"{pprint(result)}")
 
+                        search_result_bytes = msgpack.packb(result)
+                        search_result_header = f"{HeaderCode.FILE_SEARCH.value}{len(search_result_bytes):<{HEADER_MSG_LEN}}".encode(
+                            FMT
+                        )
+
+                        notified_socket.sendall(search_result_header + search_result_bytes)
+                    else:
+                        raise RequestException(
+                            msg=f"User does not exist",
+                            code=ExceptionCode.NOT_FOUND,
+                        )
                 case HeaderCode.HEARTBEAT_REQUEST:
                     username = ip_to_uname.get(notified_socket.getpeername()[0])
                     if username is not None:
@@ -310,6 +341,8 @@ def read_handler(notified_socket: socket.socket) -> None:
                 uname_to_ip.pop(uname, None)
             except ValueError:
                 logging.info("already removed")
+            except Exception as e:
+                logging.exception(f"Error while removing socket: {e}")
         except RequestException as e:
             if e.code == ExceptionCode.DISCONNECT:
                 try:

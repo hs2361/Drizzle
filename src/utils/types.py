@@ -9,6 +9,7 @@ class HeaderCode(Enum):
     DIRECT_TRANSFER_REQUEST = "t"
     DIRECT_TRANSFER = "T"
     FILE_REQUEST = "F"
+    FILE_BROWSE = "b"
     FILE_SEARCH = "s"
     HEARTBEAT_REQUEST = "H"
     REQUEST_UNAME = "R"
@@ -85,6 +86,11 @@ class DirData(TypedDict):
     hash: str | None
     compression: int
     children: list["DirData"] | None  # type: ignore
+
+
+class ItemSearchResult(TypedDict):
+    owner: str
+    data: DirData
 
 
 class UpdateHashParams(TypedDict):

@@ -9,6 +9,7 @@ prompt-toolkit = "*"
 tqdm = "*"
 PyQt5 = "*"
 notify-py = "*"
+fuzzysearch = "*"
 
 [dev-packages]
 pre-commit = "*"

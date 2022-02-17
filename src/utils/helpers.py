@@ -2,10 +2,20 @@ import hashlib
 import logging
 import math
 import os
+import re
 from pathlib import Path
 
+from fuzzysearch import find_near_matches
+
 from utils.constants import HASH_BUFFER_LEN, TEMP_FOLDER_PATH  # MESSAGE_MAX_LEN,
-from utils.types import CompressionMethod, DirData, Message, TransferProgress, TransferStatus
+from utils.types import (
+    CompressionMethod,
+    DirData,
+    ItemSearchResult,
+    Message,
+    TransferProgress,
+    TransferStatus,
+)
 
 
 def generate_transfer_progress() -> dict[Path, TransferProgress]:
@@ -48,6 +58,25 @@ def get_files_in_dir(dir: list[DirData] | None, files: list[DirData]):
             files.append(item)
         else:
             get_files_in_dir(item["children"], files)
+
+
+def item_search(
+    dir: list[DirData] | None, items: list[ItemSearchResult], search_query: str, owner: str
+):
+    if dir is None:
+        return
+    for item in dir:
+        if re.search(search_query, item["name"]) is not None or find_near_matches(
+            search_query, item["name"], max_l_dist=1
+        ):
+            items.append(
+                {
+                    "owner": owner,
+                    "data": item,
+                }
+            )
+        if item["type"] == "directory":
+            item_search(item["children"], items, search_query, owner)
 
 
 def display_share_dict(share: list[DirData] | None, indents: int = 0):

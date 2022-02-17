@@ -53,6 +53,7 @@ from PyQt5.QtWidgets import (
 from ui.ErrorDialog import Ui_ErrorDialog
 from ui.FileInfoDialog import Ui_FileInfoDialog
 from ui.FileProgressWidget import Ui_FileProgressWidget
+from ui.FileSearchDialog import Ui_FileSearchDialog
 from ui.SettingsDialog import Ui_SettingsDialog
 
 sys.path.append("../")
@@ -97,6 +98,7 @@ from utils.types import (
     FileMetadata,
     FileRequest,
     HeaderCode,
+    ItemSearchResult,
     Message,
     ProgressBarData,
     TransferProgress,
@@ -348,11 +350,15 @@ class HandleFileRequestWorker(QRunnable):
         self.resume_offset = resume_offset
 
     def run(self) -> None:
+        file_send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        file_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         try:
-            file_send_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            file_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             # file_send_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_CORK, 0)
             file_send_socket.connect(self.requester)
+        except Exception as e:
+            logging.exception(f"Exception when sending file: {e}")
+            return
+        try:
             hash = ""
 
             if self.request_hash:
@@ -560,7 +566,7 @@ class ReceiveHandler(QObject):
                             except ValueError:
                                 logging.info("already removed")
                         logging.error(msg=f"Exception: {e.msg}")
-                        show_error_dialog(f"Error occurred when communicating with peer.\n{e.msg}")
+                        # show_error_dialog(f"Error occurred when communicating with peer.\n{e.msg}")
                         break
 
 
@@ -658,6 +664,7 @@ class SendFileWorker(QObject):
 
 
 class Signals(QObject):
+    start_download = pyqtSignal(dict)
     receiving_new_file = pyqtSignal(tuple)
     file_progress_update = pyqtSignal(Path)
     dir_progress_update = pyqtSignal(tuple)
@@ -1226,14 +1233,14 @@ class Ui_DrizzleMainWindow(QWidget):
                 return
             searchquery_bytes = username.encode(FMT)
             search_header = (
-                f"{HeaderCode.FILE_SEARCH.value}{len(searchquery_bytes):<{HEADER_MSG_LEN}}".encode(
+                f"{HeaderCode.FILE_BROWSE.value}{len(searchquery_bytes):<{HEADER_MSG_LEN}}".encode(
                     FMT
                 )
             )
             server_socket_mutex.lock("file search")
             client_send_socket.send(search_header + searchquery_bytes)
             response_header_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
-            if response_header_type == HeaderCode.FILE_SEARCH.value:
+            if response_header_type == HeaderCode.FILE_BROWSE.value:
                 response_len = int(client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip())
                 browse_files: list[DBData] = msgpack.unpackb(
                     recvall(client_send_socket, response_len),
@@ -1298,6 +1305,9 @@ class Ui_DrizzleMainWindow(QWidget):
 
         self.Buttons.addItem(self.horizontalSpacer)
 
+        self.btn_GlobalSearch = QPushButton(self.centralwidget)
+        self.btn_GlobalSearch.setObjectName("pushButton_7")
+
         self.btn_AddFiles = QPushButton(self.centralwidget)
         self.btn_AddFiles.setObjectName("pushButton_2")
         self.btn_AddFiles.clicked.connect(self.import_files)
@@ -1306,6 +1316,7 @@ class Ui_DrizzleMainWindow(QWidget):
         self.btn_AddFolder.setObjectName("pushButton_2")
         self.btn_AddFolder.clicked.connect(self.import_folder)
 
+        self.Buttons.addWidget(self.btn_GlobalSearch)
         self.Buttons.addWidget(self.btn_AddFiles)
         self.Buttons.addWidget(self.btn_AddFolder)
 
@@ -1515,6 +1526,9 @@ class Ui_DrizzleMainWindow(QWidget):
                 "MainWindow", f"Drizzle / {self.user_settings['uname']}", None
             )
         )
+        self.btn_GlobalSearch.setText(
+            QCoreApplication.translate("MainWindow", "Global Search", None)
+        )
         self.btn_AddFiles.setText(QCoreApplication.translate("MainWindow", "Import Files", None))
         self.btn_AddFolder.setText(QCoreApplication.translate("MainWindow", "Import Folder", None))
         self.btn_Settings.setText(QCoreApplication.translate("MainWindow", "Settings", None))
@@ -1522,6 +1536,7 @@ class Ui_DrizzleMainWindow(QWidget):
             QCoreApplication.translate("MainWindow", "Browse Files", None)
         )
 
+        self.btn_GlobalSearch.clicked.connect(lambda: self.open_global_search(MainWindow))
         self.btn_Settings.clicked.connect(lambda: self.open_settings(MainWindow))
 
         __sortingEnabled = self.file_tree.isSortingEnabled()
@@ -1793,3 +1808,25 @@ class Ui_DrizzleMainWindow(QWidget):
             f"{HeaderCode.DIRECT_TRANSFER_REQUEST}{len(rejection):<{HEADER_MSG_LEN}}".encode(FMT)
         )
         peer_socket.send(rejection_header + rejection)
+
+    def open_global_search(self, MainWindow):
+        signals = Signals()
+        global_search_dialog = QDialog(MainWindow)
+        global_search_dialog.ui = Ui_FileSearchDialog(
+            global_search_dialog, client_send_socket, server_socket_mutex, signals.start_download
+        )
+        global_search_dialog.ui.start_download.connect(self.download_from_global_search)
+        global_search_dialog.exec()
+
+    def download_from_global_search(self, item: ItemSearchResult):
+        global selected_file_items
+        global selected_uname
+        selected_file_items = [item["data"]]
+        selected_uname = item["owner"]
+        self.download_files()
+        self.on_file_item_selected()
+        items = self.lw_OnlineStatus.selectedItems()
+        if len(items):
+            item = items[0]
+            username: str = item.data(Qt.UserRole)
+            selected_uname = username

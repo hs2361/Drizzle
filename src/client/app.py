@@ -10,7 +10,7 @@ from ui.StartWindow import Ui_StartWindow
 
 
 sys.path.append("../")
-from utils.constants import RECV_FOLDER_PATH, USER_SETTINGS_PATH
+from utils.constants import RECV_FOLDER_PATH, SHARE_FOLDER_PATH, USER_SETTINGS_PATH
 from utils.types import UserSettings
 
 CLIENT_IP = socket.gethostbyname(socket.gethostname())
@@ -28,6 +28,7 @@ class MainWindow(QMainWindow):
         self.center()
         try:
             self.user_settings: UserSettings = {
+                "share_folder_path": str(SHARE_FOLDER_PATH),
                 "downloads_folder_path": str(RECV_FOLDER_PATH),
                 "show_notifications": True,
             }
