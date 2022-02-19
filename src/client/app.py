@@ -6,9 +6,6 @@ import sys
 from PyQt5.QtWidgets import QApplication, QMainWindow
 from ui.StartWindow import Ui_StartWindow
 
-# from core.client import send_heartbeat
-
-
 sys.path.append("../")
 from utils.constants import RECV_FOLDER_PATH, SHARE_FOLDER_PATH, USER_SETTINGS_PATH
 from utils.types import UserSettings
@@ -38,9 +35,7 @@ class MainWindow(QMainWindow):
 
             self.ui = Ui_DrizzleMainWindow(self)
         except Exception as e:
-            logging.error(
-                f"User Settings not found, starting from scratch. Cause: {e}", exc_info=True
-            )
+            logging.error(f"User Settings not found, starting from defaults. Cause: {e}", exc_info=True)
             self.ui = Ui_StartWindow(self)
 
     def center(self):

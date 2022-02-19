@@ -25,9 +25,7 @@ def get_self_ip():
 
 def request_uname(ip: str, client_send_socket: socket.socket) -> str | None:
     ip_bytes = ip.encode(FMT)
-    request_header = f"{HeaderCode.REQUEST_UNAME.value}{len(ip_bytes):<{HEADER_MSG_LEN}}".encode(
-        FMT
-    )
+    request_header = f"{HeaderCode.REQUEST_UNAME.value}{len(ip_bytes):<{HEADER_MSG_LEN}}".encode(FMT)
     logging.debug(msg=f"Sent packet {(request_header + ip_bytes).decode(FMT)}")
     client_send_socket.send(request_header + ip_bytes)
     res_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
@@ -53,28 +51,30 @@ def request_uname(ip: str, client_send_socket: socket.socket) -> str | None:
 
 def request_ip(uname: str, client_send_socket: socket.socket) -> str | None:
     uname_bytes = uname.encode(FMT)
-    request_header = f"{HeaderCode.REQUEST_IP.value}{len(uname_bytes):<{HEADER_MSG_LEN}}".encode(
-        FMT
-    )
-    logging.debug(msg=f"Sent packet {(request_header + uname_bytes).decode(FMT)}")
-    client_send_socket.send(request_header + uname_bytes)
-    res_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
-    logging.debug(msg=f"Response type: {res_type}")
-    response_length = int(client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip())
-    res_bytes = client_send_socket.recv(response_length)
-    logging.debug(msg=f"peer ip response {res_bytes}")
-    if res_type == HeaderCode.REQUEST_IP.value:
-        return res_bytes.decode(FMT)
-    elif res_type == HeaderCode.ERROR.value:
-        error: RequestException = msgpack.unpackb(
-            res_bytes,
-            object_hook=RequestException.from_dict,
-            raw=False,
-        )
-        logging.error(msg=error.msg)
-        return None
-    else:
-        logging.error(f"Invalid message type in header: {res_type}")
+    request_header = f"{HeaderCode.REQUEST_IP.value}{len(uname_bytes):<{HEADER_MSG_LEN}}".encode(FMT)
+    try:
+        client_send_socket.send(request_header + uname_bytes)
+        logging.debug(msg=f"Sent packet {(request_header + uname_bytes).decode(FMT)}")
+        res_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
+        logging.debug(msg=f"Response type: {res_type}")
+        response_length = int(client_send_socket.recv(HEADER_MSG_LEN).decode(FMT).strip())
+        res_bytes = client_send_socket.recv(response_length)
+        logging.debug(msg=f"peer ip response {res_bytes!r}")
+        if res_type == HeaderCode.REQUEST_IP.value:
+            return res_bytes.decode(FMT)
+        elif res_type == HeaderCode.ERROR.value:
+            error: RequestException = msgpack.unpackb(
+                res_bytes,
+                object_hook=RequestException.from_dict,
+                raw=False,
+            )
+            logging.error(msg=error.msg)
+            return None
+        else:
+            logging.error(f"Invalid message type in header: {res_type}")
+            return None
+    except Exception as e:
+        logging.exception(e)
         return None
 
 
@@ -92,9 +92,7 @@ def recvall(peer_socket: socket.socket, length: int) -> bytes:
 
 def update_share_data(share_folder_path: Path, client_send_socket: socket.socket):
     share_data = msgpack.packb(path_to_dict(share_folder_path, str(share_folder_path))["children"])
-    share_data_header = f"{HeaderCode.SHARE_DATA.value}{len(share_data):<{HEADER_MSG_LEN}}".encode(
-        FMT
-    )
+    share_data_header = f"{HeaderCode.SHARE_DATA.value}{len(share_data):<{HEADER_MSG_LEN}}".encode(FMT)
     client_send_socket.sendall(share_data_header + share_data)
     msg_type = client_send_socket.recv(HEADER_TYPE_LEN).decode(FMT)
     if msg_type != HeaderCode.SHARE_DATA.value:
