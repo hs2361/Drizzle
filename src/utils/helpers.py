@@ -66,8 +66,8 @@ def item_search(
     if dir is None:
         return
     for item in dir:
-        if re.search(search_query, item["name"]) is not None or find_near_matches(
-            search_query, item["name"], max_l_dist=1
+        if re.search(search_query, item["name"].lower()) is not None or find_near_matches(
+            search_query, item["name"].lower(), max_l_dist=1
         ):
             items.append(
                 {

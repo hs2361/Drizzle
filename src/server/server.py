@@ -290,8 +290,10 @@ def read_handler(notified_socket: socket.socket) -> None:
                         data: list[DBData] = drizzle_db.all()
                         result: list[ItemSearchResult] = []
                         for user in data:
+                            if user["uname"] == username:
+                                continue
                             dir: list[DirData] = user["share"]
-                            item_search(dir, result, search_query, user["uname"])
+                            item_search(dir, result, search_query.lower(), user["uname"])
                         logging.debug(f"{pprint(result)}")
 
                         search_result_bytes = msgpack.packb(result)
@@ -309,12 +311,14 @@ def read_handler(notified_socket: socket.socket) -> None:
                     username = ip_to_uname.get(notified_socket.getpeername()[0])
                     if username is not None:
                         uname_to_status[username] = time.time()
-                        data = msgpack.packb(uname_to_status)
+                        filtered_status = {
+                            k: v for k, v in uname_to_status.items() if k != username
+                        }
+                        data = msgpack.packb(filtered_status)
                         header = f"{HeaderCode.HEARTBEAT_REQUEST.value}{len(data):<{HEADER_MSG_LEN}}".encode(
                             FMT
                         )
                         notified_socket.sendall(header + data)
-
                     else:
                         raise RequestException(
                             msg=f"Username does not exist",
