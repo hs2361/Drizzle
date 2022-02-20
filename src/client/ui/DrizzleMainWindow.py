@@ -1326,10 +1326,13 @@ class Ui_DrizzleMainWindow(QWidget):
             # TODO: Generate transfer progress for progress widgets
 
     def dump_progress_data(self) -> None:
+        """A method used to save progress data to disk. Called externally by the close event of MainWindow."""
         worker = SaveProgressWorker()
         worker.dump_progress_data()
 
     def send_message(self) -> None:
+        """Sends a message to the global selected user"""
+
         global client_send_socket
         global client_recv_socket
         global messages_store
@@ -1338,22 +1341,29 @@ class Ui_DrizzleMainWindow(QWidget):
 
         if self.txtedit_MessageInput.toPlainText() == "":
             return
+
+        # Acquire lock for server socket
         server_socket_mutex.lock()
         peer_ip = ""
+        # Request peer ip from server if not cached
         if uname_to_ip.get(selected_uname) is None:
             peer_ip = request_ip(selected_uname, client_send_socket)
-            uname_to_ip[selected_uname] = peer_ip
+            uname_to_ip[selected_uname] = peer_ip  # Update cache
+        # Use cached peer ip
         else:
             peer_ip = uname_to_ip.get(selected_uname)
+        # Release server socket
         server_socket_mutex.unlock()
-        client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client_peer_socket.connect((peer_ip, CLIENT_RECV_PORT))
         if peer_ip is not None:
+            # Send message to peer
+            client_peer_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client_peer_socket.connect((peer_ip, CLIENT_RECV_PORT))
             msg = self.txtedit_MessageInput.toPlainText()
             msg_bytes = msg.encode(FMT)
             header = f"{HeaderCode.MESSAGE.value}{len(msg_bytes):<{HEADER_MSG_LEN}}".encode(FMT)
             try:
                 client_peer_socket.send(header + msg_bytes)
+                # Update local messages store
                 if messages_store.get(selected_uname) is not None:
                     messages_store[selected_uname].append({"sender": self_uname, "content": msg})
                 else:
@@ -1369,12 +1379,26 @@ class Ui_DrizzleMainWindow(QWidget):
             show_error_dialog(f"This user has gone offline or does not exist. Try again later")
 
     def closeEvent(self, event) -> None:
+        """Closes the heartbeat thread before exiting the application"""
+
         self.heartbeat_thread.exit()
         return super().closeEvent(event)
 
     def render_file_tree(self, share: list[DirData] | None, parent: QTreeWidgetItem) -> None:
+        """Recursively traverse a directory structure to render in a tree widget
+
+        Parameters
+        ----------
+        share : list[DirData] | None
+            Dictionary representing a directory structure. Holds None for leaf nodes (files).
+        parent : QTreeWidgetItem
+            Parent item widget in the rendered tree
+        """
+
         if share is None:
             return
+
+        # Create widget for each item in the current level of the file tree
         for item in share:
             if item["type"] == "file":
                 file_item = QTreeWidgetItem(parent)
@@ -1384,23 +1408,35 @@ class Ui_DrizzleMainWindow(QWidget):
                 dir_item = QTreeWidgetItem(parent)
                 dir_item.setText(0, item["name"] + "/")
                 dir_item.setData(0, Qt.UserRole, item)
+                # Recursive call for immediate children
                 self.render_file_tree(item["children"], dir_item)
 
     def on_file_item_selected(self) -> None:
+        """Slot to perform actions when user selects a file.
+
+        This method sets the value of the global selected_file_items object. It also selectively enables or disables the File Info button.
+        """
+
         global selected_file_items
+
         selected_items = self.file_tree.selectedItems()
         selected_file_items = []
+        # Create list of file items
         for item in selected_items:
             data: DirData = item.data(0, Qt.UserRole)
             selected_file_items.append(data)
+        # Enable info btn if 1 item is selected
         if len(selected_items) == 1:
             self.lbl_FileInfo.setText(selected_file_items[0]["name"])
             self.btn_FileInfo.setEnabled(True)
+        # Disable info btn if 0 or multiple items are selected
         else:
             self.lbl_FileInfo.setText(f"{len(selected_items)} items selected")
             self.btn_FileInfo.setEnabled(False)
 
     def download_files(self) -> None:
+        """Method to start downloads for the global selected file items."""
+
         global selected_uname
         global client_send_socket
         global transfer_progress
@@ -1408,11 +1444,13 @@ class Ui_DrizzleMainWindow(QWidget):
         global server_socket_mutex
         global uname_to_ip
 
+        # Thread pool instanced
         request_file_pool = QThreadPool.globalInstance()
 
         for selected_item in selected_file_items:
             server_socket_mutex.lock()
             peer_ip = ""
+            # Use cache to obtain peer ip
             if uname_to_ip.get(selected_uname) is None:
                 peer_ip = request_ip(selected_uname, client_send_socket)
                 uname_to_ip[selected_uname] = peer_ip
@@ -1423,17 +1461,19 @@ class Ui_DrizzleMainWindow(QWidget):
                 logging.error(f"Selected user {selected_uname} does not exist")
                 show_error_dialog(f"Selected user {selected_uname} does not exist")
                 return
-
+            # New transfer progress entry added
             transfer_progress[TEMP_FOLDER_PATH / selected_uname / selected_item["path"]] = {
                 "progress": 0,
                 "status": TransferStatus.NEVER_STARTED,
             }
+            # Start file download thread in pool
             if selected_item["type"] == "file":
                 request_file_worker = RequestFileWorker(selected_item, peer_ip, selected_uname, None)
                 request_file_worker.signals.receiving_new_file.connect(self.new_file_progress)
                 request_file_worker.signals.file_progress_update.connect(self.update_file_progress)
                 request_file_worker.signals.file_download_complete.connect(self.remove_progress_widget)
                 request_file_pool.start(request_file_worker)
+            # Start folder download threads in pool
             else:
                 files_to_request: list[DirData] = []
                 get_files_in_dir(
@@ -1441,6 +1481,7 @@ class Ui_DrizzleMainWindow(QWidget):
                     files_to_request,
                 )
                 dir_path = TEMP_FOLDER_PATH / selected_uname / selected_item["path"]
+                # New directory progress entry added
                 dir_progress[dir_path] = {
                     "current": 0,
                     "total": get_directory_size(selected_item, 0, 0)[0],
@@ -1448,44 +1489,85 @@ class Ui_DrizzleMainWindow(QWidget):
                     "mutex": QMutex(),
                 }
                 self.new_file_progress((dir_path, dir_progress[dir_path]["total"]))
+                # Add transfer progress for all files in folder
                 for f in files_to_request:
                     transfer_progress[TEMP_FOLDER_PATH / selected_uname / f["path"]] = {
                         "progress": 0,
                         "status": TransferStatus.NEVER_STARTED,
                     }
+                # Start threads for all files in folder
                 for file in files_to_request:
                     request_file_worker = RequestFileWorker(file, peer_ip, selected_uname, dir_path)
                     request_file_worker.signals.dir_progress_update.connect(self.update_dir_progress)
                     request_file_pool.start(request_file_worker)
 
     def messages_controller(self, message: Message) -> None:
+        """Method to conditionally render chat messages.
+
+        Only performs the render operation if the received message is from the actively selected user.
+
+        Parameters
+        ----------
+
+        message : Message
+            the latest received message object
+        """
+
         global selected_uname
         global self_uname
+        # Only start rendering if selected user is sender
         if message["sender"] == selected_uname:
             self.render_messages(messages_store[selected_uname])
 
     def render_messages(self, messages_list: list[Message]) -> None:
+        """Performs the render operation for chat messages.
+
+        Clears message area and replaces it with new html for the selected user's message history. Automatically scrolls down widget to new content.
+
+        Parameters
+        ----------
+        messages_list : list[Message]
+            list of message objects to be displayed, in order.
+        """
+
         global self_uname
         if messages_list is None or messages_list == []:
             self.txtedit_MessagesArea.clear()
             return
+        # Construct message area html
         messages_html = LEADING_HTML
         for message in messages_list:
             messages_html += construct_message_html(message, message["sender"] == self_uname)
         messages_html += TRAILING_HTML
         self.txtedit_MessagesArea.setHtml(messages_html)
+        # Scroll to latest
         self.txtedit_MessagesArea.verticalScrollBar().setValue(self.txtedit_MessagesArea.verticalScrollBar().maximum())
 
     def update_online_status(self, new_status: dict[str, int]) -> None:
+        """Slot function that updates status display for users on the network.
+
+        Called by the update_status signal.
+
+        Parameters
+        ----------
+        new_status : dict[str, int]
+            latest fetched status dictionary that maps username to a last active timestamp.
+        """
+
         global uname_to_status
+        # Existing users in local list
         old_users = set(uname_to_status.keys())
+        # Users not initially in local list
         new_users = set(new_status.keys())
+        # List of users to add
         to_add = new_users.difference(old_users)
+        # List of users to remove
         users_to_remove = old_users.difference(new_users)
 
+        # Update or remove widgets for users already present in local list
         for index in range(self.lw_OnlineStatus.count()):
             item = self.lw_OnlineStatus.item(index)
-            username = item.data(Qt.UserRole)  # type: ignore
+            username = item.data(Qt.UserRole)
             if username in users_to_remove:
                 item.setIcon(self.icon_Offline)
                 timestamp = time.localtime(uname_to_status[username])
@@ -1503,14 +1585,14 @@ class Ui_DrizzleMainWindow(QWidget):
                         else f" (last active: {time.strftime('%d-%m-%Y %H:%M:%S', timestamp)})"
                     )
                 )
-
+        # Add widgets for new users
         for uname in to_add:
             status_item = QListWidgetItem(self.lw_OnlineStatus)
             status_item.setIcon(
                 self.icon_Online if time.time() - new_status[uname] <= ONLINE_TIMEOUT else self.icon_Offline
             )
             timestamp = time.localtime(new_status[uname])
-            status_item.setData(Qt.UserRole, uname)  # type: ignore
+            status_item.setData(Qt.UserRole, uname)
             status_item.setText(
                 uname + ""
                 if time.time() - new_status[uname] <= ONLINE_TIMEOUT
@@ -1519,6 +1601,14 @@ class Ui_DrizzleMainWindow(QWidget):
         uname_to_status = new_status
 
     def on_user_selection_changed(self) -> None:
+        """Slot function to perform actions when a different user is selected.
+
+        This method is responsible for setting the global selected_user value and fetching a share directory structure to be rendered.
+        It also conditionally enables buttons for sending messages and files.
+
+        Called by the itemSelectionChanged signal as well as the refresh button's clicked signal.
+        """
+
         global selected_uname
         global server_socket_mutex
 
@@ -1528,14 +1618,17 @@ class Ui_DrizzleMainWindow(QWidget):
             username: str = item.data(Qt.UserRole)
             selected_uname = username
             self.render_messages(messages_store.get(selected_uname))
+            # User considered offline if inactive beyond treshold [ONLINE_TIMEOUT] value
             enable_if_online = True if time.time() - uname_to_status[username] < ONLINE_TIMEOUT else False
             self.btn_SendMessage.setEnabled(enable_if_online)
             self.btn_SendFile.setEnabled(enable_if_online)
             self.btn_RefreshFileTree.setEnabled(enable_if_online)
+            # Clear file tree if selected user is offline
             if time.time() - uname_to_status[username] > ONLINE_TIMEOUT:
                 self.file_tree.clear()
                 self.file_tree.headerItem().setText(0, "Selected user is offline")
                 return
+            # Fetch share data from server if selected user is online
             searchquery_bytes = username.encode(FMT)
             search_header = f"{HeaderCode.FILE_BROWSE.value}{len(searchquery_bytes):<{HEADER_MSG_LEN}}".encode(FMT)
             server_socket_mutex.lock()
@@ -1547,6 +1640,7 @@ class Ui_DrizzleMainWindow(QWidget):
                     recvall(client_send_socket, response_len),
                 )
                 server_socket_mutex.unlock()
+                # Display share data for selected user
                 if len(browse_files):
                     self.file_tree.clear()
                     self.file_tree.headerItem().setText(0, username)
@@ -1557,6 +1651,7 @@ class Ui_DrizzleMainWindow(QWidget):
                 server_socket_mutex.unlock()
                 logging.error(f"Error occured while fetching files data, {response_header_type}")
                 show_error_dialog(f"Error occured while fetching files data")
+        # Clear file tree and disable buttons if no user selected
         else:
             self.btn_SendMessage.setEnabled(False)
             self.btn_SendFile.setEnabled(False)
@@ -1565,6 +1660,17 @@ class Ui_DrizzleMainWindow(QWidget):
             self.file_tree.headerItem().setText(0, "No user selected")
 
     def setupUi(self, MainWindow: MainWindow) -> None:
+        """Method to perform UI initialisation.
+
+        Sets layouts, widgets, items and properties in the MainWindow's ui.
+        Majority code generated by the Qt UIC
+
+        Parameters
+        ----------
+        MainWindow : MainWindow
+            Instance of the application's main window.
+        """
+
         if not MainWindow.objectName():
             MainWindow.setObjectName("MainWindow")
         MainWindow.resize(881, 744)
@@ -1740,6 +1846,7 @@ class Ui_DrizzleMainWindow(QWidget):
         sizePolicy3.setVerticalStretch(0)
         sizePolicy3.setHeightForWidth(self.txtedit_MessageInput.sizePolicy().hasHeightForWidth())
         self.txtedit_MessageInput.setSizePolicy(sizePolicy3)
+        # Use smaller text area for OS-X to correctly theme corresponding buttons
         if sys.platform == "darwin":
             self.txtedit_MessageInput.setMaximumSize(QSize(16777215, 60))
         else:
@@ -1819,6 +1926,16 @@ class Ui_DrizzleMainWindow(QWidget):
         QMetaObject.connectSlotsByName(MainWindow)
 
     def retranslateUi(self, MainWindow: MainWindow) -> None:
+        """Method to show initial content on the UI.
+
+        Sets base text on labels and buttons.
+        Majority code generated by the Qt UIC
+
+        Parameters
+        ----------
+        MainWindow : MainWindow
+            Instance of the application's main window.
+        """
         MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", "Drizzle", None))
         self.label_3.setText(QCoreApplication.translate("MainWindow", f"Drizzle / {self.user_settings['uname']}", None))
         self.btn_GlobalSearch.setText(QCoreApplication.translate("MainWindow", "Global Search", None))
@@ -1849,11 +1966,29 @@ class Ui_DrizzleMainWindow(QWidget):
         self.btn_RefreshFileTree.setText(QCoreApplication.translate("MainWindow", "⟳", None))
 
     def open_settings(self, MainWindow: MainWindow) -> None:
+        """Slot function to launch the user settings dialog
+
+        Called by the clicked signal of the settings button.
+
+        Parameters
+        ----------
+        MainWindow : MainWindow
+            Instance of the application's main window.
+        """
         settings_dialog = QDialog(MainWindow)
         settings_dialog.ui = Ui_SettingsDialog(settings_dialog, self.user_settings)
         settings_dialog.exec()
 
     def open_file_info(self, MainWindow: MainWindow) -> None:
+        """Slot function to launch the file information dialog for a global selected item.
+
+        Called by the clicked signal of the file info button.
+
+        Parameters
+        ----------
+        MainWindow : MainWindow
+            Instance of the application's main window.
+        """
         global selected_file_items
         global selected_uname
         selected_item = selected_file_items[0]
@@ -1874,17 +2009,28 @@ class Ui_DrizzleMainWindow(QWidget):
         file_info_dialog.exec()
 
     def import_files(self) -> None:
+        """Slot function to launch a file picker for importing file symlinks.
+
+        Called by the clicked signal of the add files button.
+        """
+
         global server_socket_mutex
         files, _ = QFileDialog.getOpenFileNames(self, "Import Files", str(Path.home()), "All Files (*)")
         for file in files:
             imported = import_file_to_share(Path(file), Path(self.user_settings["share_folder_path"]))
             if imported is not None:
                 print(f"Imported file {imported}")
+        # Provide up-to-date share directory data to server
         server_socket_mutex.lock()
         update_share_data(Path(self.user_settings["share_folder_path"]), client_send_socket)
         server_socket_mutex.unlock()
 
     def import_folder(self) -> None:
+        """Slot function to launch a file picker for importing folder symlinks.
+
+        Called by the clicked signal of the add folder button.
+        """
+
         global server_socket_mutex
 
         dir = QFileDialog.getExistingDirectory(self, "Import Folder", str(Path.home()), QFileDialog.ShowDirsOnly)
@@ -1893,14 +2039,23 @@ class Ui_DrizzleMainWindow(QWidget):
         imported = import_file_to_share(Path(dir), Path(self.user_settings["share_folder_path"]))
         if imported is not None:
             print(f"Imported file {imported}")
+        # Provide up-to-date share directory data to server
         server_socket_mutex.lock()
         update_share_data(Path(self.user_settings["share_folder_path"]), client_send_socket)
         server_socket_mutex.unlock()
 
     def share_file(self) -> None:
+        """Slot function to launch a file picker for a direct file transfer.
+
+        Called by the clicked signal of the send file button.
+        Starts a thread to perform the transfer.
+        """
+
         filepath, _ = QFileDialog.getOpenFileName(self, "Send Files", str(Path.home()), "All Files (*)")
         if filepath == "":
             return
+
+        # Create thread to send a file
         self.send_file_thread = QThread()
         self.send_file_worker = SendFileWorker(Path(filepath))
         self.send_file_worker.moveToThread(self.send_file_thread)
@@ -1913,7 +2068,18 @@ class Ui_DrizzleMainWindow(QWidget):
         self.send_file_thread.start()
 
     def pause_download(self, path: Path) -> None:
+        """Slot function to pause an active download.
+
+        Called by the pause_download signal.
+        This method updates the global transfer progress object to reflect the paused status for a given item.
+
+        Parameters
+        ----------
+        path : Path
+            Path to the item to pause. This path should exist in the client's temp folder.
+        """
         logging.debug(f"Paused file {path}")
+        # Set transfer statuses to paused to notify relevant threads to halt the transfer
         if path.is_file():
             transfer_progress[path]["status"] = TransferStatus.PAUSED
         else:
@@ -1926,8 +2092,22 @@ class Ui_DrizzleMainWindow(QWidget):
                         transfer_progress[pathname]["status"] = TransferStatus.PAUSED
 
     def resume_download(self, path: Path) -> None:
+        """Slot function to resume a paused download.
+
+        Called by the resume_download signal.
+        This method updates the global transfer progress object to reflect the resumed status for a given item.
+        New file download workers are created and submitted to a global thread pool instance.
+
+        Parameters
+        ----------
+        path : Path
+            Path to the item to pause. This path should exist in the client's temp folder.
+        """
+
         global transfer_progress
+        # Get relative path from temp folder
         relative_path = path.relative_to(TEMP_FOLDER_PATH)
+        # Extract sender username from temp path
         uname = str(relative_path.parents[-2])
         peer_ip = request_ip(uname, client_send_socket)
         logging.debug(msg=f"resuming for peer ip {peer_ip}")
@@ -1937,6 +2117,7 @@ class Ui_DrizzleMainWindow(QWidget):
             # TODO: auto switch progress bar to paused state
             return
         pool = QThreadPool.globalInstance()
+        # Start file download
         if path.is_file():
             file_item: DirData = {
                 "name": path.name,
@@ -1947,13 +2128,15 @@ class Ui_DrizzleMainWindow(QWidget):
                 "compression": CompressionMethod.NONE,
                 "children": None,
             }
-
+            # Update transfer progress
             transfer_progress[path]["status"] = TransferStatus.DOWNLOADING
+            # Start file request thread in pool
             worker = RequestFileWorker(file_item, peer_ip, uname, None)
             worker.signals.file_progress_update.connect(self.update_file_progress)
             worker.signals.file_download_complete.connect(self.remove_progress_widget)
             pool.start(worker)
         elif path.is_dir():
+            # Obtain paused files in requested directory
             paused_items: list[DirData] = []
             for (pathname, progress) in transfer_progress.items():
                 if path in pathname.parents:
@@ -1970,15 +2153,28 @@ class Ui_DrizzleMainWindow(QWidget):
                                 "children": None,
                             }
                         )
+
+            # Update transfer progress
             for file in paused_items:
                 transfer_progress[TEMP_FOLDER_PATH / uname / file["path"]]["status"] = TransferStatus.DOWNLOADING
 
+            # Start file request threads in pool
             for file in paused_items:
                 request_file_worker = RequestFileWorker(file, peer_ip, uname, path)
                 request_file_worker.signals.dir_progress_update.connect(self.update_dir_progress)
                 pool.start(request_file_worker)
 
     def remove_progress_widget(self, path: Path) -> None:
+        """UI utility method to clear progress widget for a completed download.
+
+        A notification is sent at this stage to inform the user of the download's completion.
+
+        Parameters
+        ----------
+        path : Path
+            Path to completed item.
+        """
+
         global progress_widgets
         if user_settings["show_notifications"]:
             notif = Notify()
@@ -1994,6 +2190,15 @@ class Ui_DrizzleMainWindow(QWidget):
             logging.info(f"Could not find progress widget for {path}")
 
     def new_file_progress(self, data: tuple[Path, int]) -> None:
+        """UI utility method to render a new progress widget for a new or resumed download.
+
+        Parameters
+        ----------
+        data : tuple[Path, int]
+            Initial data provided to progress widget.
+            Pairs an item's path with its total size.
+        """
+
         global progress_widgets
         file_progress_widget = QWidget(self.scrollContents_FileProgress)
         file_progress_widget.ui = Ui_FileProgressWidget(
@@ -2007,6 +2212,15 @@ class Ui_DrizzleMainWindow(QWidget):
         progress_widgets[data[0]] = file_progress_widget
 
     def update_file_progress(self, path: Path) -> None:
+        """Method to update the progress indicator for a downloading file.
+
+        New progress amount is obtained from the global transfer progress dictionary.
+
+        Parameters
+        ----------
+        path : Path
+            Path to downloading file.
+        """
         global transfer_progress
         global progress_widgets
         logging.debug(f"progress_widgets: {progress_widgets}")
@@ -2014,6 +2228,16 @@ class Ui_DrizzleMainWindow(QWidget):
             progress_widgets[path].ui.update_progress(transfer_progress[path]["progress"])
 
     def update_dir_progress(self, progress_data: tuple[Path, int]) -> None:
+        """Method to update the progress indicator for a downloading folder.
+
+        New progress amount is obtained from the global directory progress dictionary and provided increment value.
+
+        Parameters
+        ----------
+        progress_data : tuple[Path, int]
+            Pairs directory path to an increment in progress.
+        """
+
         global dir_progress
         global progress_widgets
         path, increment = progress_data
@@ -2026,29 +2250,60 @@ class Ui_DrizzleMainWindow(QWidget):
         dir_progress[path]["mutex"].unlock()
 
     def direct_transfer_controller(self, data: tuple[FileMetadata, socket.socket]) -> None:
+        """Method to handle an incoming direct file transfer.
+
+        A message box is displayed to get consent to receive file.
+        Corresponding helpers are called based on user choice.
+
+        Parameters
+        ----------
+        data : tuple[FileMetadata, socket.socket]
+            Pairs a metadata object to the sender's socket
+        """
         global ip_to_uname
         metadata, peer_socket = data
         username = ip_to_uname[peer_socket.getpeername()[0]]
+        # Construct user consent message box
         message_box = QMessageBox(self.MainWindow)
         message_box.setIcon(QMessageBox.Question)
         message_box.setWindowTitle("File incoming")
         message_box.setText(f"{username} is trying to send you a file: {metadata['path']}\nDo you want to accept?")
         btn_Accept = message_box.addButton(QMessageBox.Yes)
         btn_Reject = message_box.addButton(QMessageBox.No)
+        # If user accepts file
         btn_Accept.clicked.connect(lambda: self.direct_transfer_accept(metadata, username, peer_socket))
+        # If user rejects file
         btn_Reject.clicked.connect(lambda: self.direct_transfer_reject(peer_socket))
         message_box.exec()
 
     def direct_transfer_accept(self, metadata: FileMetadata, sender: str, peer_socket: socket.socket) -> None:
+        """Helper method for accepting a direct transfer request.
+
+        Creates a new socket for receiving file and sends new port to the sender.
+        Creates a worker to receive file and submits it to an instance of the global thread pool.
+
+        Parameters
+        ----------
+        metadata : FileMetadata
+            Metadata object for incoming file
+        sender : str
+            Username of sender
+        peer_socket : socket.socket
+            Socket of sender
+        """
+
+        # Create new socket for receiving file
         file_recv_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         file_recv_socket.bind((CLIENT_IP, 0))
         file_recv_socket.listen()
         file_recv_port = file_recv_socket.getsockname()[1]
         logging.debug(f"file recv on port {file_recv_port}")
+        # Notify sender of the new port
         response = str(file_recv_port).encode(FMT)
         response_header = f"{HeaderCode.DIRECT_TRANSFER_REQUEST.value}{len(response):<{HEADER_MSG_LEN}}".encode(FMT)
         peer_socket.send(response_header + response)
         logging.debug("file accepted")
+        # Start file receive thread in pool
         recv_direct_transfer_worker = ReceiveDirectTransferWorker(metadata, sender, file_recv_socket)
         recv_direct_transfer_worker.signals.receiving_new_file.connect(self.new_file_progress)
         recv_direct_transfer_worker.signals.file_progress_update.connect(self.update_file_progress)
@@ -2058,11 +2313,29 @@ class Ui_DrizzleMainWindow(QWidget):
         recv_direct_transfer_pool.start(recv_direct_transfer_worker)
 
     def direct_transfer_reject(self, peer_socket: socket.socket) -> None:
+        """Helper method for rejecting a direct transfer request.
+
+        Sends a rejection message (-1) to the sender.
+
+        Parameters
+        ----------
+        peer_socket : socket.socket
+            Socket of sender
+        """
+        # Notify sender that file was rejected
         rejection = b"-1"
         rejection_header = f"{HeaderCode.DIRECT_TRANSFER_REQUEST}{len(rejection):<{HEADER_MSG_LEN}}".encode(FMT)
         peer_socket.send(rejection_header + rejection)
 
     def open_global_search(self, MainWindow: MainWindow) -> None:
+        """Slot function to open the file search dialog.
+
+        Parameters
+        ----------
+        MainWindow : MainWindow
+            Instance of the application's main window.
+        """
+
         signals = Signals()
         global_search_dialog = QDialog(MainWindow)
         global_search_dialog.ui = Ui_FileSearchDialog(
@@ -2072,11 +2345,23 @@ class Ui_DrizzleMainWindow(QWidget):
         global_search_dialog.exec()
 
     def download_from_global_search(self, item: ItemSearchResult) -> None:
+        """Slot function to start download for a search result
+
+        Connected to the start_download signal.
+
+        Parameters
+        ----------
+        item : ItemSearchResult
+            The selected search result object.
+        """
         global selected_file_items
         global selected_uname
+        # Temporarily set selected items using search dialog data
         selected_file_items = [item["data"]]
         selected_uname = item["owner"]
+        # Run download method
         self.download_files()
+        # Reset selected items
         self.on_file_item_selected()
         items = self.lw_OnlineStatus.selectedItems()
         if len(items):
