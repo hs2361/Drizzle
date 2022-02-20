@@ -1,10 +1,29 @@
 # Drizzle
 
-Drizzle is a lightweight file-sharing and messaging platform inspired by DC++
+*Drizzle is a lightweight file-sharing and messaging platform inspired by DC++.*\
+[See the feature list](https://github.com/hs2361/Drizzle/edit/gui/README.md#features)
 
-[Demonstration Video](./docs/media/Drizzle_Final.mp4)
+[Demonstration Video (file)](./docs/media/Drizzle_Final.mp4)
 
-## Feature List
+https://user-images.githubusercontent.com/56076061/154854653-22287ddf-0cdd-4334-b60b-21f8c1c12f9d.mp4
+
+## The Team
+
+- [Harsh Sharma](https://github.com/hs2361)
+- [Aaryak Shah](https://github.com/aaryak-shah)
+- [Anirudh Gautam](https://github.com/gautamanirudh)
+
+## Technologies Used
+
+- Python
+- Sockets
+- Qt Framework
+
+## Thought Behind the Project
+
+Drizzle is inspired by the DC++ project, a popular file sharing application. This project aims to provide a far simpler and easy to navigate user experience for high performance file sharing. It attempts to make a cross compatible, lightweight application that's easy to deploy and use on local networks.
+
+## Features
 
 ### See Who's Online 🌐
 
@@ -129,9 +148,9 @@ pipenv run python app.py
 
 > Note: Running the app inside a pipenv may prevent it from accessing the OS's active theme and may use some default styling.
 
-## Compatibility
+## Platform Support
 
-### Linux
+### GNU/Linux
 
 **Complete feature support.** All functionalities should work as intended on a Linux machine and between Linux peers.
 
