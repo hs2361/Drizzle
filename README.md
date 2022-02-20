@@ -19,9 +19,9 @@ https://user-images.githubusercontent.com/56076061/154854653-22287ddf-0cdd-4334-
 - Sockets
 - Qt Framework
 
-## Thought Behind the Project
+## Thoughts Behind the Project
 
-Drizzle is inspired by the DC++ project, a popular file sharing application. This project aims to provide a far simpler and easy to navigate user experience for high performance file sharing. It attempts to make a cross compatible, lightweight application that's easy to deploy and use on local networks.
+Drizzle is inspired by the DC++ project, a popular file sharing application. This project aims to provide a far simpler and easy to navigate user experience for high performance file sharing. It attempts to make a cross compatible, lightweight application that's easy to deploy and use on local networks, making it useful for using over college networks.
 
 ## Features
 
