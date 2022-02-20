@@ -1,24 +1,44 @@
-# -*- coding: utf-8 -*-
+# Imports (standard libraries)
+import logging
+import socket
 
-################################################################################
-## Form generated from reading UI file 'StartWindow.ui'
-##
-## Created by: Qt User Interface Compiler version 5.15.2
-##
-## WARNING! All changes made in this file will be lost when recompiling UI file!
-################################################################################
+# Imports (PyPI)
+from PyQt5.QtCore import QCoreApplication, QMetaObject
+from PyQt5.QtGui import QFont
+from PyQt5.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QSpacerItem, QVBoxLayout, QWidget
 
-from PySide2.QtCore import *
-from PySide2.QtGui import *
-from PySide2.QtWidgets import *
+# Imports (UI components)
+from ui.BasicConfigWindow import Ui_BasicConfigWindow
+
+CLIENT_IP = socket.gethostbyname(socket.gethostname())
+
+# Logging configuration
+logging.basicConfig(level=logging.DEBUG)
 
 
-class Ui_StartWindow(object):
-    def setupUi(self, StartWindow):
-        if not StartWindow.objectName():
-            StartWindow.setObjectName("StartWindow")
-        StartWindow.resize(342, 264)
-        self.centralwidget = QWidget(StartWindow)
+class Ui_StartWindow(QWidget):
+    """The start window shown to the user to pick a username
+
+    Attributes
+    ----------
+    MainWindow
+        The main application window object
+
+    Methods
+    ----------
+    onContinue(Dialog)
+        Saves the username and moves to the next window
+    """
+
+    def __init__(self, MainWindow):
+        super(Ui_StartWindow, self).__init__()
+        self.setupUi(MainWindow)
+
+    def setupUi(self, MainWindow) -> None:
+        if not MainWindow.objectName():
+            MainWindow.setObjectName("StartWindow")
+        MainWindow.resize(342, 264)
+        self.centralwidget = QWidget(MainWindow)
         self.centralwidget.setObjectName("centralwidget")
         self.verticalLayout_2 = QVBoxLayout(self.centralwidget)
         self.verticalLayout_2.setObjectName("verticalLayout_2")
@@ -46,6 +66,7 @@ class Ui_StartWindow(object):
 
         self.pushButton = QPushButton(self.centralwidget)
         self.pushButton.setObjectName("pushButton")
+        self.pushButton.clicked.connect(lambda: self.onContinue(MainWindow))  # type: ignore
 
         self.horizontalLayout.addWidget(self.pushButton)
 
@@ -57,23 +78,20 @@ class Ui_StartWindow(object):
 
         self.verticalLayout_2.addItem(self.verticalSpacer)
 
-        StartWindow.setCentralWidget(self.centralwidget)
+        MainWindow.setCentralWidget(self.centralwidget)
 
-        self.retranslateUi(StartWindow)
+        self.retranslateUi(MainWindow)
+        QMetaObject.connectSlotsByName(MainWindow)
 
-        QMetaObject.connectSlotsByName(StartWindow)
-
-    # setupUi
-
-    def retranslateUi(self, StartWindow):
-        StartWindow.setWindowTitle(
-            QCoreApplication.translate("StartWindow", "Welcome To Drizzle", None)
-        )
+    def retranslateUi(self, MainWindow) -> None:
+        MainWindow.setWindowTitle(QCoreApplication.translate("StartWindow", "Welcome To Drizzle", None))
         self.label.setText(QCoreApplication.translate("StartWindow", "Drizzle", None))
         self.lineEdit.setText("")
-        self.lineEdit.setPlaceholderText(
-            QCoreApplication.translate("StartWindow", "Enter Your Username", None)
-        )
+        self.lineEdit.setPlaceholderText(QCoreApplication.translate("StartWindow", "Enter Your Username", None))
         self.pushButton.setText(QCoreApplication.translate("StartWindow", "Continue", None))
 
-    # retranslateUi
+    def onContinue(self, MainWindow) -> None:
+        MainWindow.user_settings["uname"] = self.lineEdit.text()
+        logging.debug(f"Username updated, new settings: {MainWindow.user_settings}")
+        MainWindow.ui = Ui_BasicConfigWindow(MainWindow)
+        self.close()

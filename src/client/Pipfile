@@ -7,7 +7,9 @@ name = "pypi"
 msgpack = "*"
 prompt-toolkit = "*"
 tqdm = "*"
-pyside2 = "*"
+PyQt5 = "*"
+notify-py = "*"
+fuzzysearch = "*"
 
 [dev-packages]
 pre-commit = "*"

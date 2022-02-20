@@ -1,20 +1,56 @@
-# -*- coding: utf-8 -*-
+# Imports (standard libraries)
+import json
+import os
+import sys
+from pathlib import Path
 
-################################################################################
-## Form generated from reading UI file 'SettingsDialog.ui'
-##
-## Created by: Qt User Interface Compiler version 5.15.2
-##
-## WARNING! All changes made in this file will be lost when recompiling UI file!
-################################################################################
+# Imports (PyPI)
+from PyQt5.QtCore import QCoreApplication, QMetaObject
+from PyQt5.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QFileDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QSizePolicy,
+    QSpacerItem,
+    QVBoxLayout,
+)
 
-from PySide2.QtCore import *
-from PySide2.QtGui import *
-from PySide2.QtWidgets import *
+# Imports (utilities)
+sys.path.append("../")
+from utils.constants import USER_SETTINGS_PATH
+from utils.types import UserSettings
 
 
-class Ui_SettingsDialog(object):
-    def setupUi(self, Dialog):
+class Ui_SettingsDialog(QDialog):
+    """A dialog that allows the user to change the application settings
+
+    Attributes
+    ----------
+    Dialog
+        The dialog object
+    settings : UserSettings
+        The existing settings that are displayed in the dialog
+
+    Methods
+    ----------
+    apply_settings(Dialog)
+        Saves the entered settings into the file
+    open_dir_picker(is_share_path: bool)
+        Opens the directory picker dialog
+    """
+
+    def __init__(self, Dialog, settings: UserSettings):
+        super(Ui_SettingsDialog, self).__init__()
+        self.settings = settings
+        self.setupUi(Dialog)
+
+    def setupUi(self, Dialog) -> None:
         if not Dialog.objectName():
             Dialog.setObjectName("Dialog")
         Dialog.resize(640, 236)
@@ -27,65 +63,73 @@ class Ui_SettingsDialog(object):
         self.formLayout.setObjectName("formLayout")
         self.label = QLabel(Dialog)
         self.label.setObjectName("label")
-        self.label.setMargin(10)
 
         self.formLayout.setWidget(0, QFormLayout.LabelRole, self.label)
 
         self.horizontalLayout = QHBoxLayout()
         self.horizontalLayout.setObjectName("horizontalLayout")
-        self.lineEdit = QLineEdit(Dialog)
-        self.lineEdit.setObjectName("lineEdit")
+        self.le_SharePath = QLineEdit(Dialog)
+        self.le_SharePath.setObjectName("lineEdit")
 
-        self.horizontalLayout.addWidget(self.lineEdit)
+        self.horizontalLayout.addWidget(self.le_SharePath)
 
-        self.pushButton = QPushButton(Dialog)
-        self.pushButton.setObjectName("pushButton")
+        self.btn_SelectShare = QPushButton(Dialog)
+        self.btn_SelectShare.setObjectName("pushButton")
+        self.btn_SelectShare.clicked.connect(lambda: self.open_dir_picker(True))
 
-        self.horizontalLayout.addWidget(self.pushButton)
+        self.horizontalLayout.addWidget(self.btn_SelectShare)
 
         self.formLayout.setLayout(0, QFormLayout.FieldRole, self.horizontalLayout)
 
         self.label_2 = QLabel(Dialog)
         self.label_2.setObjectName("label_2")
-        self.label_2.setMargin(10)
 
         self.formLayout.setWidget(1, QFormLayout.LabelRole, self.label_2)
 
         self.horizontalLayout_2 = QHBoxLayout()
         self.horizontalLayout_2.setObjectName("horizontalLayout_2")
-        self.lineEdit_2 = QLineEdit(Dialog)
-        self.lineEdit_2.setObjectName("lineEdit_2")
+        self.le_DownloadsPath = QLineEdit(Dialog)
+        self.le_DownloadsPath.setObjectName("lineEdit_2")
 
-        self.horizontalLayout_2.addWidget(self.lineEdit_2)
+        self.horizontalLayout_2.addWidget(self.le_DownloadsPath)
 
-        self.pushButton_2 = QPushButton(Dialog)
-        self.pushButton_2.setObjectName("pushButton_2")
+        self.btn_SelectDownload = QPushButton(Dialog)
+        self.btn_SelectDownload.setObjectName("pushButton_2")
+        self.btn_SelectDownload.clicked.connect(lambda: self.open_dir_picker(False))
 
-        self.horizontalLayout_2.addWidget(self.pushButton_2)
+        self.horizontalLayout_2.addWidget(self.btn_SelectDownload)
 
         self.formLayout.setLayout(1, QFormLayout.FieldRole, self.horizontalLayout_2)
 
         self.label_3 = QLabel(Dialog)
         self.label_3.setObjectName("label_3")
-        self.label_3.setMargin(10)
 
         self.formLayout.setWidget(2, QFormLayout.LabelRole, self.label_3)
 
-        self.lineEdit_3 = QLineEdit(Dialog)
-        self.lineEdit_3.setObjectName("lineEdit_3")
+        self.le_Username = QLineEdit(Dialog)
+        self.le_Username.setObjectName("lineEdit_3")
 
-        self.formLayout.setWidget(2, QFormLayout.FieldRole, self.lineEdit_3)
+        self.formLayout.setWidget(2, QFormLayout.FieldRole, self.le_Username)
 
-        self.lineEdit_4 = QLineEdit(Dialog)
-        self.lineEdit_4.setObjectName("lineEdit_4")
+        self.le_ServerIP = QLineEdit(Dialog)
+        self.le_ServerIP.setObjectName("lineEdit_4")
 
-        self.formLayout.setWidget(3, QFormLayout.FieldRole, self.lineEdit_4)
+        self.formLayout.setWidget(3, QFormLayout.FieldRole, self.le_ServerIP)
 
         self.label_4 = QLabel(Dialog)
         self.label_4.setObjectName("label_4")
-        self.label_4.setMargin(10)
 
         self.formLayout.setWidget(3, QFormLayout.LabelRole, self.label_4)
+
+        self.toggle = QCheckBox(Dialog)
+        self.formLayout.setWidget(4, QFormLayout.FieldRole, self.toggle)
+
+        self.label_5 = QLabel(Dialog)
+        self.label_5.setObjectName("label_5")
+
+        self.formLayout.setWidget(4, QFormLayout.LabelRole, self.label_5)
+
+        self.formLayout.setSpacing(10)
 
         self.verticalLayout.addLayout(self.formLayout)
 
@@ -95,15 +139,15 @@ class Ui_SettingsDialog(object):
 
         self.horizontalLayout_3.addItem(self.horizontalSpacer)
 
-        self.pushButton_4 = QPushButton(Dialog)
-        self.pushButton_4.setObjectName("pushButton_4")
+        self.btn_Cancel = QPushButton(Dialog)
+        self.btn_Cancel.setObjectName("pushButton_4")
 
-        self.horizontalLayout_3.addWidget(self.pushButton_4)
+        self.horizontalLayout_3.addWidget(self.btn_Cancel)
 
-        self.pushButton_3 = QPushButton(Dialog)
-        self.pushButton_3.setObjectName("pushButton_3")
+        self.btn_Apply = QPushButton(Dialog)
+        self.btn_Apply.setObjectName("pushButton_3")
 
-        self.horizontalLayout_3.addWidget(self.pushButton_3)
+        self.horizontalLayout_3.addWidget(self.btn_Apply)
 
         self.verticalLayout.addLayout(self.horizontalLayout_3)
 
@@ -113,23 +157,74 @@ class Ui_SettingsDialog(object):
 
         QMetaObject.connectSlotsByName(Dialog)
 
-    # setupUi
-
-    def retranslateUi(self, Dialog):
+    def retranslateUi(self, Dialog) -> None:
         Dialog.setWindowTitle(QCoreApplication.translate("Dialog", "Settings", None))
         self.label.setText(QCoreApplication.translate("Dialog", "Share Folder Path", None))
-        self.lineEdit.setText(
-            QCoreApplication.translate("Dialog", "/home/john/Drizzle/share/", None)
-        )
-        self.pushButton.setText(QCoreApplication.translate("Dialog", "Select", None))
+        self.le_SharePath.setText(QCoreApplication.translate("Dialog", self.settings["share_folder_path"], None))
+        self.btn_SelectShare.setText(QCoreApplication.translate("Dialog", "Select", None))
         self.label_2.setText(QCoreApplication.translate("Dialog", "Downloads Folder Path", None))
-        self.lineEdit_2.setText(QCoreApplication.translate("Dialog", "/home/john/Downloads/", None))
-        self.pushButton_2.setText(QCoreApplication.translate("Dialog", "Select", None))
+        self.le_DownloadsPath.setText(
+            QCoreApplication.translate("Dialog", self.settings["downloads_folder_path"], None)
+        )
+        self.btn_SelectDownload.setText(QCoreApplication.translate("Dialog", "Select", None))
         self.label_3.setText(QCoreApplication.translate("Dialog", "Username", None))
-        self.lineEdit_3.setText(QCoreApplication.translate("Dialog", "john_doe_", None))
-        self.lineEdit_4.setText(QCoreApplication.translate("Dialog", "192.168.0.4", None))
+        self.le_Username.setText(QCoreApplication.translate("Dialog", self.settings["uname"], None))
+        self.le_ServerIP.setText(QCoreApplication.translate("Dialog", self.settings["server_ip"], None))
         self.label_4.setText(QCoreApplication.translate("Dialog", "Server IP", None))
-        self.pushButton_4.setText(QCoreApplication.translate("Dialog", "Cancel", None))
-        self.pushButton_3.setText(QCoreApplication.translate("Dialog", "Apply", None))
+        self.btn_Cancel.setText(QCoreApplication.translate("Dialog", "Cancel", None))
+        self.btn_Apply.setText(QCoreApplication.translate("Dialog", "Apply", None))
 
-    # retranslateUi
+        self.label_5.setText(QCoreApplication.translate("Dialog", "Show Desktop Notifications", None))
+
+        self.btn_Apply.clicked.connect(lambda: self.apply_settings(Dialog))
+        self.btn_Cancel.clicked.connect(Dialog.close)
+        self.toggle.setChecked(self.settings["show_notifications"])
+
+    def apply_settings(self, Dialog) -> None:
+        """
+        Gets the entered settings and saves them to the file. Also opens a dialog to restart the application if needed
+
+        Parameters
+        ----------
+        Dialog
+            The dialog object
+        """
+
+        new_settings: UserSettings = {}
+        new_settings["downloads_folder_path"] = self.le_DownloadsPath.text()
+        new_settings["share_folder_path"] = self.le_SharePath.text()
+        new_settings["server_ip"] = self.le_ServerIP.text()
+        new_settings["uname"] = self.le_Username.text()
+        new_settings["show_notifications"] = self.toggle.isChecked()
+
+        with USER_SETTINGS_PATH.open(mode="w") as user_settings_file:
+            json.dump(new_settings, user_settings_file)
+
+        if new_settings != self.settings:
+            message_box = QMessageBox(Dialog)
+            message_box.setIcon(QMessageBox.Information)
+            message_box.setWindowTitle("Settings Changed")
+            message_box.setText("New settings will be applied after restart")
+            message_box.addButton(QMessageBox.Close)
+            btn_restart = message_box.addButton("Restart Now", QMessageBox.NoRole)
+            btn_restart.clicked.connect(lambda: os.execl(sys.executable, sys.executable, *sys.argv))
+            message_box.exec()
+
+        self.settings = new_settings
+        Dialog.close()
+
+    def open_dir_picker(self, is_share_path: bool) -> None:
+        """Opens the directory picker dialog to choose the share folder path or downloads folder path
+
+        Parameters
+        ----------
+        is_share_path : bool
+            Whether or not this picker is for choosing the share folder path
+        """
+
+        title = "Select Share Folder" if is_share_path else "Select Downloads Folder"
+        path = QFileDialog.getExistingDirectory(self, title, str(Path.home()), QFileDialog.ShowDirsOnly)
+        if is_share_path:
+            self.le_SharePath.setText(path)
+        else:
+            self.le_DownloadsPath.setText(path)

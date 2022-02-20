@@ -20,14 +20,12 @@ RUN fallocate -l 5K ../share/sub/test3.file
 RUN fallocate -l 1G ../share/sub/test1.file
 RUN fallocate -l 100M ../share/sub/test4.file
 RUN fallocate -l 10M ../share/sub/test5.file
-RUN fallocate -l 10M ../share/sub/test6.file
-RUN fallocate -l 10M ../share/sub/test7.file
-RUN fallocate -l 10M ../share/sub/test8.file
-RUN fallocate -l 10M ../share/sub/test9.file
-RUN fallocate -l 10M ../share/sub/test10.file
-RUN fallocate -l 10M ../share/sub/test11.file
-RUN fallocate -l 10M ../share/sub/test12.file
-RUN fallocate -l 10M ../share/sub/test13.file
 
+RUN apt-get update
+RUN apt-get install -y xauth
 
-ENTRYPOINT [ "python", "client.py" ]
+EXPOSE 8887
+
+RUN xauth add legion/unix:  MIT-MAGIC-COOKIE-1  50258766dfae525d25243e9de1c92ff1
+
+# ENTRYPOINT [ "python", "app.py" ]
