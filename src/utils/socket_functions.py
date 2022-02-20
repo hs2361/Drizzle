@@ -10,7 +10,16 @@ from utils.helpers import path_to_dict
 from utils.types import HeaderCode
 
 
-def get_self_ip():
+def get_self_ip() -> str:
+    """Utility to obtain the current user's own IP address.
+
+    Starts a connection with a temporary socket and attempts to find its own IP.
+
+    Returns
+    -------
+    str
+        IP address of this client
+    """
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.settimeout(0)
     try:
@@ -24,6 +33,20 @@ def get_self_ip():
 
 
 def request_uname(ip: str, client_send_socket: socket.socket) -> str | None:
+    """Utililty that requests the server for a peer's username against a known IP address.
+
+    Parameters
+    ----------
+    ip : str
+        (Known) IP address of a peer.
+    client_send_socket : socket.socket
+        Socket object that is connected to the server.
+
+    Returns
+    -------
+    str | None
+        Returns the username of peer if given by the server, or returns None if not found.
+    """
     ip_bytes = ip.encode(FMT)
     request_header = f"{HeaderCode.REQUEST_UNAME.value}{len(ip_bytes):<{HEADER_MSG_LEN}}".encode(FMT)
     logging.debug(msg=f"Sent packet {(request_header + ip_bytes).decode(FMT)}")
@@ -50,6 +73,25 @@ def request_uname(ip: str, client_send_socket: socket.socket) -> str | None:
 
 
 def request_ip(uname: str, client_send_socket: socket.socket) -> str | None:
+    """Utililty that requests the server for a peer's IP against a known username.
+
+    Parameters
+    ----------
+    uname : str
+        (Known) username of a peer.
+    client_send_socket : socket.socket
+        Socket object that is connected to the server.
+
+    Returns
+    -------
+    str | None
+        Returns the IP address of peer if given by the server, or returns None if not found.
+
+    Raises
+    ------
+    Exception
+        Exception raised if communication with server fails
+    """
     uname_bytes = uname.encode(FMT)
     request_header = f"{HeaderCode.REQUEST_IP.value}{len(uname_bytes):<{HEADER_MSG_LEN}}".encode(FMT)
     try:
@@ -79,6 +121,23 @@ def request_ip(uname: str, client_send_socket: socket.socket) -> str | None:
 
 
 def recvall(peer_socket: socket.socket, length: int) -> bytes:
+    """Utility to ensure lossless reception of data for a large communication.
+
+    The function receives in a loop till the expected amount of data is received.
+    This is done prevent data loss, as the socket.recv method by itself cannot guarantee a lossless reception.
+
+    Parameters
+    ----------
+    peer_socket : socket.socket
+        Socket on which to receive data.
+    length : int
+        Expected size of incoming data.
+
+    Returns
+    -------
+    bytes
+        Returns all the data received by the function.
+    """
     received = 0
     data: bytes = b""
     while received != length:
@@ -91,6 +150,17 @@ def recvall(peer_socket: socket.socket, length: int) -> bytes:
 
 
 def update_share_data(share_folder_path: Path, client_send_socket: socket.socket):
+    """Utility to send new share folder data to the server.
+
+    Generates dictionary representation of the share folder and sends it to the server.
+
+    Parameters
+    ----------
+    share_folder_path : Path
+        Path to user's share folder.
+    client_send_socket : socket.socket
+        Socket object that is connected to the server.
+    """
     share_data = msgpack.packb(path_to_dict(share_folder_path, str(share_folder_path))["children"])
     share_data_header = f"{HeaderCode.SHARE_DATA.value}{len(share_data):<{HEADER_MSG_LEN}}".encode(FMT)
     client_send_socket.sendall(share_data_header + share_data)
