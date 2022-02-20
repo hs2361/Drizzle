@@ -1,15 +1,47 @@
+# Imports (standard libraries)
 import sys
 from pathlib import Path
 
+# Imports (PyPI)
 from PyQt5.QtCore import QCoreApplication, QMetaObject, QSize, pyqtSignal
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QPushButton, QSizePolicy, QWidget
 
+# Imports (utilities)
 sys.path.append("../")
 from utils.helpers import convert_size
 
 
 class Ui_FileProgressWidget(QWidget):
+    """A widget containing a progress bar and resume/pause button along with information about file downloads
+
+    Attributes
+    ----------
+    Widget
+        The widget object
+    item_path : Path
+        The path to the file item being downloaded
+    total : int
+        The total size of the download in bytes
+    pause_signal : pyqtSignal
+        A signal that is emitted when the pause button is pressed
+    resume_signal : pyqtSignal
+        A signal that is emitted when the resume button is pressed
+
+    Methods
+    ----------
+    update_progress(new_val: int)
+        Updates the progress bar
+    toggle_download()
+        Toggles the download (resume/pause)
+    total : int
+        The total size of the download in bytes
+    pause_signal : pyqtSignal
+        A signal that is emitted when the pause button is pressed
+    resume_signal : pyqtSignal
+        A signal that is emitted when the resume button is
+    """
+
     def __init__(
         self,
         Widget,
@@ -27,12 +59,22 @@ class Ui_FileProgressWidget(QWidget):
         self.setupUi(Widget, total)
         self.paused = False
 
-    def update_progress(self, new_val: int):
+    def update_progress(self, new_val: int) -> None:
+        """Updates the progress bar to new_val
+
+        Parameters
+        ----------
+        new_val : int
+            The new value to which to update the progress bar
+        """
+
         converted_size = convert_size(new_val)
         self.progressBar.setFormat(f"{converted_size}/{self.fmt_total}")
         self.progressBar.setValue(new_val)
 
     def toggle_download(self):
+        """Switches between resuming and pausing the download and emits the resume and pause signals"""
+
         if not self.paused:
             self.pause_signal.emit(self.path)
             self.btn_Toggle.setText("▶")
@@ -84,7 +126,6 @@ class Ui_FileProgressWidget(QWidget):
         sizePolicy2 = QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         sizePolicy2.setHorizontalStretch(0)
         sizePolicy2.setVerticalStretch(0)
-        # sizePolicy2.setHeightForWidth(self.btn_Toggle.sizePolicy().hasHeightForWidth())
         self.btn_Toggle.setSizePolicy(sizePolicy2)
         self.btn_Toggle.setMinimumSize(QSize(40, 40))
         self.btn_Toggle.setMaximumSize(QSize(40, 40))
@@ -97,11 +138,7 @@ class Ui_FileProgressWidget(QWidget):
 
         QMetaObject.connectSlotsByName(Widget)
 
-    # setupUi
-
     def retranslateUi(self):
         self.label.setText(QCoreApplication.translate("Widget", f"{self.path.name}", None))
         self.label.setToolTip(str(self.path))
         self.btn_Toggle.setText(QCoreApplication.translate("Widget", "⏸", None))
-
-    # retranslateUi

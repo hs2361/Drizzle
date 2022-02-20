@@ -1,8 +1,10 @@
+# Imports (standard libraries)
 import json
 import os
 import sys
 from pathlib import Path
 
+# Imports (PyPI)
 from PyQt5.QtCore import QCoreApplication, QMetaObject
 from PyQt5.QtWidgets import (
     QCheckBox,
@@ -19,18 +21,36 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
 )
 
+# Imports (utilities)
 sys.path.append("../")
 from utils.constants import USER_SETTINGS_PATH
 from utils.types import UserSettings
 
 
 class Ui_SettingsDialog(QDialog):
+    """A dialog that allows the user to change the application settings
+
+    Attributes
+    ----------
+    Dialog
+        The dialog object
+    settings : UserSettings
+        The existing settings that are displayed in the dialog
+
+    Methods
+    ----------
+    apply_settings(Dialog)
+        Saves the entered settings into the file
+    open_dir_picker(is_share_path: bool)
+        Opens the directory picker dialog
+    """
+
     def __init__(self, Dialog, settings: UserSettings):
         super(Ui_SettingsDialog, self).__init__()
         self.settings = settings
         self.setupUi(Dialog)
 
-    def setupUi(self, Dialog):
+    def setupUi(self, Dialog) -> None:
         if not Dialog.objectName():
             Dialog.setObjectName("Dialog")
         Dialog.resize(640, 236)
@@ -137,14 +157,10 @@ class Ui_SettingsDialog(QDialog):
 
         QMetaObject.connectSlotsByName(Dialog)
 
-    # setupUi
-
-    def retranslateUi(self, Dialog):
+    def retranslateUi(self, Dialog) -> None:
         Dialog.setWindowTitle(QCoreApplication.translate("Dialog", "Settings", None))
         self.label.setText(QCoreApplication.translate("Dialog", "Share Folder Path", None))
-        self.le_SharePath.setText(
-            QCoreApplication.translate("Dialog", self.settings["share_folder_path"], None)
-        )
+        self.le_SharePath.setText(QCoreApplication.translate("Dialog", self.settings["share_folder_path"], None))
         self.btn_SelectShare.setText(QCoreApplication.translate("Dialog", "Select", None))
         self.label_2.setText(QCoreApplication.translate("Dialog", "Downloads Folder Path", None))
         self.le_DownloadsPath.setText(
@@ -153,23 +169,27 @@ class Ui_SettingsDialog(QDialog):
         self.btn_SelectDownload.setText(QCoreApplication.translate("Dialog", "Select", None))
         self.label_3.setText(QCoreApplication.translate("Dialog", "Username", None))
         self.le_Username.setText(QCoreApplication.translate("Dialog", self.settings["uname"], None))
-        self.le_ServerIP.setText(
-            QCoreApplication.translate("Dialog", self.settings["server_ip"], None)
-        )
+        self.le_ServerIP.setText(QCoreApplication.translate("Dialog", self.settings["server_ip"], None))
         self.label_4.setText(QCoreApplication.translate("Dialog", "Server IP", None))
         self.btn_Cancel.setText(QCoreApplication.translate("Dialog", "Cancel", None))
         self.btn_Apply.setText(QCoreApplication.translate("Dialog", "Apply", None))
 
-        self.label_5.setText(
-            QCoreApplication.translate("Dialog", "Show Desktop Notifications", None)
-        )
+        self.label_5.setText(QCoreApplication.translate("Dialog", "Show Desktop Notifications", None))
 
         self.btn_Apply.clicked.connect(lambda: self.apply_settings(Dialog))
         self.btn_Cancel.clicked.connect(Dialog.close)
         self.toggle.setChecked(self.settings["show_notifications"])
 
-    # retranslateUi
-    def apply_settings(self, Dialog):
+    def apply_settings(self, Dialog) -> None:
+        """
+        Gets the entered settings and saves them to the file. Also opens a dialog to restart the application if needed
+
+        Parameters
+        ----------
+        Dialog
+            The dialog object
+        """
+
         new_settings: UserSettings = {}
         new_settings["downloads_folder_path"] = self.le_DownloadsPath.text()
         new_settings["share_folder_path"] = self.le_SharePath.text()
@@ -193,11 +213,17 @@ class Ui_SettingsDialog(QDialog):
         self.settings = new_settings
         Dialog.close()
 
-    def open_dir_picker(self, is_share_path: bool):
+    def open_dir_picker(self, is_share_path: bool) -> None:
+        """Opens the directory picker dialog to choose the share folder path or downloads folder path
+
+        Parameters
+        ----------
+        is_share_path : bool
+            Whether or not this picker is for choosing the share folder path
+        """
+
         title = "Select Share Folder" if is_share_path else "Select Downloads Folder"
-        path = QFileDialog.getExistingDirectory(
-            self, title, str(Path.home()), QFileDialog.ShowDirsOnly
-        )
+        path = QFileDialog.getExistingDirectory(self, title, str(Path.home()), QFileDialog.ShowDirsOnly)
         if is_share_path:
             self.le_SharePath.setText(path)
         else:

@@ -1327,6 +1327,7 @@ class Ui_DrizzleMainWindow(QWidget):
 
     def dump_progress_data(self) -> None:
         """A method used to save progress data to disk. Called externally by the close event of MainWindow."""
+
         worker = SaveProgressWorker()
         worker.dump_progress_data()
 
@@ -1936,6 +1937,7 @@ class Ui_DrizzleMainWindow(QWidget):
         MainWindow : MainWindow
             Instance of the application's main window.
         """
+
         MainWindow.setWindowTitle(QCoreApplication.translate("MainWindow", "Drizzle", None))
         self.label_3.setText(QCoreApplication.translate("MainWindow", f"Drizzle / {self.user_settings['uname']}", None))
         self.btn_GlobalSearch.setText(QCoreApplication.translate("MainWindow", "Global Search", None))
@@ -1975,6 +1977,7 @@ class Ui_DrizzleMainWindow(QWidget):
         MainWindow : MainWindow
             Instance of the application's main window.
         """
+
         settings_dialog = QDialog(MainWindow)
         settings_dialog.ui = Ui_SettingsDialog(settings_dialog, self.user_settings)
         settings_dialog.exec()
@@ -1989,6 +1992,7 @@ class Ui_DrizzleMainWindow(QWidget):
         MainWindow : MainWindow
             Instance of the application's main window.
         """
+
         global selected_file_items
         global selected_uname
         selected_item = selected_file_items[0]
@@ -2078,6 +2082,7 @@ class Ui_DrizzleMainWindow(QWidget):
         path : Path
             Path to the item to pause. This path should exist in the client's temp folder.
         """
+
         logging.debug(f"Paused file {path}")
         # Set transfer statuses to paused to notify relevant threads to halt the transfer
         if path.is_file():
@@ -2221,6 +2226,7 @@ class Ui_DrizzleMainWindow(QWidget):
         path : Path
             Path to downloading file.
         """
+
         global transfer_progress
         global progress_widgets
         logging.debug(f"progress_widgets: {progress_widgets}")
@@ -2260,6 +2266,7 @@ class Ui_DrizzleMainWindow(QWidget):
         data : tuple[FileMetadata, socket.socket]
             Pairs a metadata object to the sender's socket
         """
+
         global ip_to_uname
         metadata, peer_socket = data
         username = ip_to_uname[peer_socket.getpeername()[0]]
@@ -2322,6 +2329,7 @@ class Ui_DrizzleMainWindow(QWidget):
         peer_socket : socket.socket
             Socket of sender
         """
+
         # Notify sender that file was rejected
         rejection = b"-1"
         rejection_header = f"{HeaderCode.DIRECT_TRANSFER_REQUEST}{len(rejection):<{HEADER_MSG_LEN}}".encode(FMT)
@@ -2354,6 +2362,7 @@ class Ui_DrizzleMainWindow(QWidget):
         item : ItemSearchResult
             The selected search result object.
         """
+
         global selected_file_items
         global selected_uname
         # Temporarily set selected items using search dialog data

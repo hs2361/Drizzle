@@ -1,17 +1,12 @@
+# Imports (standard libraries)
 import sys
 
+# Imports (PyPI)
 from PyQt5.QtCore import QCoreApplication, QMetaObject, Qt
 from PyQt5.QtGui import QFont
-from PyQt5.QtWidgets import (
-    QDialog,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QSizePolicy,
-    QSpacerItem,
-    QVBoxLayout,
-)
+from PyQt5.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QSpacerItem, QVBoxLayout
 
+# Imports (utilities)
 sys.path.append("../")
 from ui.SettingsDialog import Ui_SettingsDialog
 
@@ -19,6 +14,18 @@ from utils.types import UserSettings
 
 
 class Ui_ErrorDialog(QDialog):
+    """An error dialog that displays an error message and optionally, allows to open the settings
+
+    Attributes
+    ----------
+    Dialog : QDialog
+        The dialog object
+    error_log : str
+        The error text to be displayed in the dialog
+    settings : UserSettings | None
+        If not None, provides an option to open the settings dialog
+    """
+
     def __init__(self, Dialog: QDialog, error_log: str, settings: UserSettings | None):
         super(Ui_ErrorDialog, self).__init__()
         self.error_log = error_log
@@ -80,12 +87,8 @@ class Ui_ErrorDialog(QDialog):
 
         QMetaObject.connectSlotsByName(Dialog)
 
-    # setupUi
-
     def retranslateUi(self, Dialog):
-        Dialog.setWindowTitle(
-            QCoreApplication.translate("Dialog", "Drizzle: An error occurred", None)
-        )
+        Dialog.setWindowTitle(QCoreApplication.translate("Dialog", "Drizzle: An error occurred", None))
         self.label.setText(QCoreApplication.translate("Dialog", "An error occurred", None))
         self.label_2.setText(
             QCoreApplication.translate(
@@ -98,11 +101,14 @@ class Ui_ErrorDialog(QDialog):
         self.btn_Close.setText(QCoreApplication.translate("Dialog", "Close", None))
         self.btn_Close.clicked.connect(Dialog.close)
 
+        # Don't show the settings button if settings was None
         if self.settings is not None:
             self.btn_Settings.setText(QCoreApplication.translate("Dialog", "Open Settings", None))
             self.btn_Settings.clicked.connect(self.open_settings)
 
     def open_settings(self):
+        """Opens the settings dialog with the given settings"""
+
         settings_dialog = QDialog()
         settings_dialog.ui = Ui_SettingsDialog(settings_dialog, self.settings)
         settings_dialog.exec()

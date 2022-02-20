@@ -1,8 +1,10 @@
+# Imports (standard libraries)
 import json
 import logging
 import sys
 from pathlib import Path
 
+# Imports (PyPI)
 from PyQt5.QtCore import QCoreApplication, QMetaObject
 from PyQt5.QtWidgets import (
     QFileDialog,
@@ -15,18 +17,24 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+# Imports (UI components)
 from ui.DrizzleMainWindow import Ui_DrizzleMainWindow
 
+# Imports (utilities)
 sys.path.append("../")
+from client.app import MainWindow
 from utils.constants import USER_SETTINGS_PATH
 
 
 class Ui_BasicConfigWindow(QWidget):
-    def __init__(self, MainWindow):
+    """The basic configuration window shown to the user to enter server IP and share path"""
+
+    def __init__(self, MainWindow: MainWindow):
         super(Ui_BasicConfigWindow, self).__init__()
         self.setupUi(MainWindow)
 
-    def setupUi(self, MainWindow):
+    def setupUi(self, MainWindow: MainWindow) -> None:
         if not MainWindow.objectName():
             MainWindow.setObjectName("InitialSettingsWindow")
         MainWindow.resize(422, 299)
@@ -65,7 +73,7 @@ class Ui_BasicConfigWindow(QWidget):
 
         self.btn_SelectSharePath = QPushButton(self.centralwidget)
         self.btn_SelectSharePath.setObjectName("pushButton")
-        self.btn_SelectSharePath.clicked.connect(self.open_dir_picker)
+        self.btn_SelectSharePath.clicked.connect(self.open_dir_picker)  # type: ignore
 
         self.horizontalLayout.addWidget(self.btn_SelectSharePath)
 
@@ -73,7 +81,7 @@ class Ui_BasicConfigWindow(QWidget):
 
         self.btn_submit = QPushButton(self.centralwidget)
         self.btn_submit.setObjectName("pushButton_2")
-        self.btn_submit.clicked.connect(lambda: self.on_submit(MainWindow))
+        self.btn_submit.clicked.connect(lambda: self.on_submit(MainWindow))  # type: ignore
 
         self.verticalLayout.addWidget(self.btn_submit)
 
@@ -89,46 +97,45 @@ class Ui_BasicConfigWindow(QWidget):
 
         QMetaObject.connectSlotsByName(MainWindow)
 
-    # setupUi
-
-    def retranslateUi(self, MainWindow):
-        MainWindow.setWindowTitle(
-            QCoreApplication.translate("InitialSettingsWindow", "Basic Details", None)
-        )
+    def retranslateUi(self, MainWindow: MainWindow) -> None:
+        MainWindow.setWindowTitle(QCoreApplication.translate("InitialSettingsWindow", "Basic Details", None))
         self.label.setText(QCoreApplication.translate("InitialSettingsWindow", "Server IP", None))
         self.le_serverIp.setPlaceholderText(
             QCoreApplication.translate("InitialSettingsWindow", "Enter Server IP", None)
         )
-        self.label_2.setText(
-            QCoreApplication.translate("InitialSettingsWindow", "Share Folder Path", None)
-        )
+        self.label_2.setText(QCoreApplication.translate("InitialSettingsWindow", "Share Folder Path", None))
         self.le_sharePath.setPlaceholderText(
             QCoreApplication.translate("InitialSettingsWindow", "Enter Share Folder Path", None)
         )
-        self.btn_SelectSharePath.setText(
-            QCoreApplication.translate("InitialSettingsWindow", "Open", None)
-        )
-        self.btn_submit.setText(
-            QCoreApplication.translate("InitialSettingsWindow", "Continue", None)
-        )
+        self.btn_SelectSharePath.setText(QCoreApplication.translate("InitialSettingsWindow", "Open", None))
+        self.btn_submit.setText(QCoreApplication.translate("InitialSettingsWindow", "Continue", None))
 
-    # retranslateUi
+    def on_submit(self, MainWindow: MainWindow) -> None:
+        """Loads the entered values into the settings and stores them in the settings.json file
 
-    def on_submit(self, MainWindow):
+        Parameters
+        ----------
+        MainWindow : MainWindow
+            The main application window
+        """
+
+        # Get entered values
         MainWindow.user_settings["server_ip"] = self.le_serverIp.text()
         MainWindow.user_settings["share_folder_path"] = self.le_sharePath.text()
         try:
-            # USER_SETTINGS_PATH.touch(exist_ok=True)
+            # Store the settings in the settings.json file
             with USER_SETTINGS_PATH.open(mode="w") as user_settings_file:
-                json.dump(MainWindow.user_settings, user_settings_file)
+                json.dump(MainWindow.user_settings, user_settings_file, indent=4, sort_keys=True)
+
+            # Open the main window
             MainWindow.ui = Ui_DrizzleMainWindow(MainWindow)
             self.close()
         except Exception as e:
             logging.error(f"Could not save User Config: {e}")
             self.close()
 
-    def open_dir_picker(self):
-        path = QFileDialog.getExistingDirectory(
-            self, "Select Share Folder", str(Path.home()), QFileDialog.ShowDirsOnly
-        )
+    def open_dir_picker(self) -> None:
+        """Opens the directory picker to choose a share folder"""
+
+        path = QFileDialog.getExistingDirectory(self, "Select Share Folder", str(Path.home()), QFileDialog.ShowDirsOnly)
         self.le_sharePath.setText(path)

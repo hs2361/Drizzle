@@ -1,5 +1,7 @@
+# Imports (standard libraries)
 from typing import Callable
 
+# Imports (PyPI)
 from PyQt5.QtCore import QCoreApplication, QMetaObject, QSize, Qt
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
@@ -17,7 +19,19 @@ from PyQt5.QtWidgets import (
 
 
 class Ui_FileInfoDialog(QDialog):
-    def __init__(self, Dialog, filedata, download_handler: Callable[[], None]):
+    """A dialog that displays the metadata of a file or folder item
+
+    Attributes
+    ----------
+    Dialog
+        The dialog object
+    filedata : dict[str, str]
+        The metadata of the file to be displayed in the file
+    download_handler : Callable[[], None]
+        The function to be called when the download button is pressed
+    """
+
+    def __init__(self, Dialog, filedata: dict[str, str], download_handler: Callable[[], None]):
         super(Ui_FileInfoDialog, self).__init__()
         self.filedata = filedata
         self.download_handler = download_handler
@@ -100,6 +114,7 @@ class Ui_FileInfoDialog(QDialog):
 
         self.formLayout.setWidget(3, QFormLayout.FieldRole, self.label_8)
 
+        # In case of a directory show file count also
         if self.filedata["type"] == "directory":
             self.label_9 = QLabel(Dialog)
             self.label_9.setObjectName("label_9")
@@ -145,8 +160,6 @@ class Ui_FileInfoDialog(QDialog):
 
         QMetaObject.connectSlotsByName(Dialog)
 
-    # setupUi
-
     def retranslateUi(self, Dialog):
         Dialog.setWindowTitle(QCoreApplication.translate("Dialog", "File Info", None))
         self.label.setText(QCoreApplication.translate("Dialog", f"{self.filedata['name']}", None))
@@ -155,6 +168,7 @@ class Ui_FileInfoDialog(QDialog):
         self.label_4.setText(QCoreApplication.translate("Dialog", "Size", None))
         self.label_5.setText(QCoreApplication.translate("Dialog", f"{self.filedata['size']}", None))
         self.label_6.setText(QCoreApplication.translate("Dialog", "File Hash", None))
+        # File hash
         self.textBrowser.setHtml(
             QCoreApplication.translate(
                 "Dialog",
@@ -167,10 +181,6 @@ class Ui_FileInfoDialog(QDialog):
             )
         )
         self.label_7.setText(QCoreApplication.translate("Dialog", "Owner", None))
-        self.label_8.setText(
-            QCoreApplication.translate("Dialog", f"{self.filedata['owner']}", None)
-        )
+        self.label_8.setText(QCoreApplication.translate("Dialog", f"{self.filedata['owner']}", None))
         self.btn_Close.setText(QCoreApplication.translate("Dialog", "Close", None))
         self.btn_Download.setText(QCoreApplication.translate("Dialog", "Download", None))
-
-    # retranslateUi
