@@ -12,6 +12,7 @@ from datetime import datetime
 from io import BufferedReader
 from pathlib import Path
 from pprint import pformat
+from typing import Any, TypedDict
 
 # Imports (PyPI)
 import msgpack
@@ -61,7 +62,7 @@ from ui.SettingsDialog import Ui_SettingsDialog
 
 # Imports (utilities)
 sys.path.append("../")
-from client.app import MainWindow
+# from client.app import MainWindow
 from utils.constants import (
     CLIENT_RECV_PORT,
     CLIENT_SEND_PORT,
@@ -93,7 +94,6 @@ from utils.types import (
     CompressionMethod,
     DBData,
     DirData,
-    DirProgress,
     FileMetadata,
     FileRequest,
     HeaderCode,
@@ -145,7 +145,7 @@ client_recv_socket.listen(5)
 # List of peer sockets connected to the clients
 connected = [client_recv_socket]
 # Mapping from username to last seen timestamp
-uname_to_status: dict[str, int] = {}
+uname_to_status: dict[str, float] = {}
 # Mapping from username to list of messages
 messages_store: dict[str, list[Message]] = {}
 # Username selected by the user in the list
@@ -158,8 +158,6 @@ self_uname: str = ""
 transfer_progress: dict[Path, TransferProgress] = {}
 # Mapping from file path to progress bar displaying its status
 progress_widgets: dict[Path, Ui_FileProgressWidget] = {}
-# Mapping from directory path to cumulative download status and progress
-dir_progress: dict[Path, DirProgress] = {}
 # The settings of the current session
 user_settings: UserSettings = {}
 # Cache to lookup username of a given IP
@@ -196,6 +194,18 @@ def show_error_dialog(error_msg: str, show_settings: bool = False) -> None:
         error_dialog_is_open = False
 
 
+# Directory progress information
+class DirProgress(TypedDict):
+    mutex: QMutex
+    current: int
+    total: int
+    status: TransferStatus
+
+
+# Mapping from directory path to cumulative download status and progress
+dir_progress: dict[Path, DirProgress] = {}
+
+
 class SaveProgressWorker(QObject):
     """A worker that periodically saves the download progress and statuses to a file
 
@@ -228,7 +238,7 @@ class SaveProgressWorker(QObject):
         # Pickle the dir_progress dictionary
         with (Path.home() / ".Drizzle/db/dir_progress.pkl").open(mode="wb") as dir_progress_dump:
             logging.debug(msg="Created dir progress dump")
-            dir_progress_writeable: dict[Path, DirProgress] = {}
+            dir_progress_writeable: dict[Path, Any] = {}
             for path in dir_progress.keys():
                 dir_progress[path]["mutex"].lock()
                 dir_progress_writeable[path] = {
@@ -663,6 +673,7 @@ class ReceiveHandler(QObject):
                     metadata: FileMetadata = msgpack.unpackb(socket.recv(metadata_len))
                     # Emit the file_incoming signal
                     self.file_incoming.emit((metadata, socket))
+                    return None
                 # Incoming message
                 case _:
                     message_len = int(socket.recv(HEADER_MSG_LEN).decode(FMT))
@@ -779,7 +790,7 @@ class SendFileWorker(QObject):
             server_socket_mutex.unlock()
             uname_to_ip[selected_uname] = self.peer_ip
         else:
-            self.peer_ip = uname_to_ip.get(selected_uname)
+            self.peer_ip = uname_to_ip.get(selected_uname)  # type:ignore
 
         if self.peer_ip is not None:
             # Open a new socket to connect to the peer
@@ -1205,7 +1216,7 @@ class Ui_DrizzleMainWindow(QWidget):
     global client_recv_socket
     global uname_to_status
 
-    def __init__(self, MainWindow: MainWindow):
+    def __init__(self, MainWindow):
         self.MainWindow = MainWindow
         super(Ui_DrizzleMainWindow, self).__init__()
         try:
@@ -1293,7 +1304,7 @@ class Ui_DrizzleMainWindow(QWidget):
             self.receive_thread = QThread()
             self.receive_worker = ReceiveHandler()
             self.receive_worker.moveToThread(self.receive_thread)
-            self.receive_thread.started.connect(self.receive_worker.run)
+            self.receive_thread.started.connect(self.receive_worker.run)  # type: ignore
             self.receive_worker.message_received.connect(self.messages_controller)
             self.receive_worker.file_incoming.connect(self.direct_transfer_controller)
             self.receive_thread.start()
@@ -1352,7 +1363,7 @@ class Ui_DrizzleMainWindow(QWidget):
             uname_to_ip[selected_uname] = peer_ip  # Update cache
         # Use cached peer ip
         else:
-            peer_ip = uname_to_ip.get(selected_uname)
+            peer_ip = uname_to_ip[selected_uname]
         # Release server socket
         server_socket_mutex.unlock()
         if peer_ip is not None:
@@ -1404,11 +1415,11 @@ class Ui_DrizzleMainWindow(QWidget):
             if item["type"] == "file":
                 file_item = QTreeWidgetItem(parent)
                 file_item.setText(0, item["name"])
-                file_item.setData(0, Qt.UserRole, item)
+                file_item.setData(0, Qt.UserRole, item)  # type: ignore
             else:
                 dir_item = QTreeWidgetItem(parent)
                 dir_item.setText(0, item["name"] + "/")
-                dir_item.setData(0, Qt.UserRole, item)
+                dir_item.setData(0, Qt.UserRole, item)  # type: ignore
                 # Recursive call for immediate children
                 self.render_file_tree(item["children"], dir_item)
 
@@ -1424,7 +1435,7 @@ class Ui_DrizzleMainWindow(QWidget):
         selected_file_items = []
         # Create list of file items
         for item in selected_items:
-            data: DirData = item.data(0, Qt.UserRole)
+            data: DirData = item.data(0, Qt.UserRole)  # type: ignore
             selected_file_items.append(data)
         # Enable info btn if 1 item is selected
         if len(selected_items) == 1:
@@ -1456,7 +1467,7 @@ class Ui_DrizzleMainWindow(QWidget):
                 peer_ip = request_ip(selected_uname, client_send_socket)
                 uname_to_ip[selected_uname] = peer_ip
             else:
-                peer_ip = uname_to_ip.get(selected_uname)
+                peer_ip = uname_to_ip[selected_uname]
             server_socket_mutex.unlock()
             if peer_ip is None:
                 logging.error(f"Selected user {selected_uname} does not exist")
@@ -1520,7 +1531,7 @@ class Ui_DrizzleMainWindow(QWidget):
         if message["sender"] == selected_uname:
             self.render_messages(messages_store[selected_uname])
 
-    def render_messages(self, messages_list: list[Message]) -> None:
+    def render_messages(self, messages_list: list[Message] | None) -> None:
         """Performs the render operation for chat messages.
 
         Clears message area and replaces it with new html for the selected user's message history. Automatically scrolls down widget to new content.
@@ -1544,7 +1555,7 @@ class Ui_DrizzleMainWindow(QWidget):
         # Scroll to latest
         self.txtedit_MessagesArea.verticalScrollBar().setValue(self.txtedit_MessagesArea.verticalScrollBar().maximum())
 
-    def update_online_status(self, new_status: dict[str, int]) -> None:
+    def update_online_status(self, new_status: dict[str, float]) -> None:
         """Slot function that updates status display for users on the network.
 
         Called by the update_status signal.
@@ -1568,7 +1579,7 @@ class Ui_DrizzleMainWindow(QWidget):
         # Update or remove widgets for users already present in local list
         for index in range(self.lw_OnlineStatus.count()):
             item = self.lw_OnlineStatus.item(index)
-            username = item.data(Qt.UserRole)
+            username = item.data(Qt.UserRole)  # type: ignore
             if username in users_to_remove:
                 item.setIcon(self.icon_Offline)
                 timestamp = time.localtime(uname_to_status[username])
@@ -1593,7 +1604,7 @@ class Ui_DrizzleMainWindow(QWidget):
                 self.icon_Online if time.time() - new_status[uname] <= ONLINE_TIMEOUT else self.icon_Offline
             )
             timestamp = time.localtime(new_status[uname])
-            status_item.setData(Qt.UserRole, uname)
+            status_item.setData(Qt.UserRole, uname)  # type: ignore
             status_item.setText(
                 uname + ""
                 if time.time() - new_status[uname] <= ONLINE_TIMEOUT
@@ -1616,9 +1627,9 @@ class Ui_DrizzleMainWindow(QWidget):
         items = self.lw_OnlineStatus.selectedItems()
         if len(items):
             item = items[0]
-            username: str = item.data(Qt.UserRole)
+            username: str = item.data(Qt.UserRole)  # type: ignore
             selected_uname = username
-            self.render_messages(messages_store.get(selected_uname))
+            self.render_messages(messages_store.get(selected_uname, []))
             # User considered offline if inactive beyond treshold [ONLINE_TIMEOUT] value
             enable_if_online = True if time.time() - uname_to_status[username] < ONLINE_TIMEOUT else False
             self.btn_SendMessage.setEnabled(enable_if_online)
@@ -1660,7 +1671,7 @@ class Ui_DrizzleMainWindow(QWidget):
             self.file_tree.clear()
             self.file_tree.headerItem().setText(0, "No user selected")
 
-    def setupUi(self, MainWindow: MainWindow) -> None:
+    def setupUi(self, MainWindow) -> None:
         """Method to perform UI initialisation.
 
         Sets layouts, widgets, items and properties in the MainWindow's ui.
@@ -1687,12 +1698,12 @@ class Ui_DrizzleMainWindow(QWidget):
         self.verticalLayout_4.setObjectName("verticalLayout_4")
         self.verticalLayout = QVBoxLayout()
         self.verticalLayout.setObjectName("verticalLayout")
-        self.verticalLayout.setSizeConstraint(QLayout.SetMaximumSize)
+        self.verticalLayout.setSizeConstraint(QLayout.SetMaximumSize)  # type: ignore
         self.verticalLayout.setContentsMargins(10, 0, 10, -1)
         self.Buttons = QHBoxLayout()
         self.Buttons.setSpacing(6)
         self.Buttons.setObjectName("Buttons")
-        self.Buttons.setSizeConstraint(QLayout.SetDefaultConstraint)
+        self.Buttons.setSizeConstraint(QLayout.SetDefaultConstraint)  # type: ignore
         self.label_3 = QLabel(self.centralwidget)
         self.label_3.setObjectName("label_3")
         sizePolicy1 = QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
@@ -1718,11 +1729,11 @@ class Ui_DrizzleMainWindow(QWidget):
 
         self.btn_AddFiles = QPushButton(self.centralwidget)
         self.btn_AddFiles.setObjectName("pushButton_2")
-        self.btn_AddFiles.clicked.connect(self.import_files)
+        self.btn_AddFiles.clicked.connect(self.import_files)  # type: ignore
 
         self.btn_AddFolder = QPushButton(self.centralwidget)
         self.btn_AddFolder.setObjectName("pushButton_2")
-        self.btn_AddFolder.clicked.connect(self.import_folder)
+        self.btn_AddFolder.clicked.connect(self.import_folder)  # type: ignore
 
         self.Buttons.addWidget(self.btn_GlobalSearch)
         self.Buttons.addWidget(self.btn_AddFiles)
@@ -1753,7 +1764,7 @@ class Ui_DrizzleMainWindow(QWidget):
         self.btn_RefreshFileTree.setMinimumSize(QSize(30, 30))
         self.btn_RefreshFileTree.setMaximumSize(QSize(30, 30))
         self.btn_RefreshFileTree.setEnabled(False)
-        self.btn_RefreshFileTree.clicked.connect(self.on_user_selection_changed)
+        self.btn_RefreshFileTree.clicked.connect(self.on_user_selection_changed)  # type: ignore
 
         self.hl_BrowseFilesHeader.addWidget(self.label_BrowseFiles)
         self.hl_BrowseFilesHeader.addWidget(self.btn_RefreshFileTree)
@@ -1763,7 +1774,7 @@ class Ui_DrizzleMainWindow(QWidget):
 
         self.file_tree = QTreeWidget(self.centralwidget)
         # self.file_tree.itemClicked.connect(self.on_file_item_selected)
-        self.file_tree.itemSelectionChanged.connect(self.on_file_item_selected)
+        self.file_tree.itemSelectionChanged.connect(self.on_file_item_selected)  # type: ignore
         self.file_tree.header().setVisible(True)
         self.file_tree.headerItem().setText(0, "No user selected")
         self.file_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -1784,14 +1795,14 @@ class Ui_DrizzleMainWindow(QWidget):
         self.btn_FileInfo = QPushButton(self.centralwidget)
         self.btn_FileInfo.setObjectName("pushButton_5")
         self.btn_FileInfo.setEnabled(True)
-        self.btn_FileInfo.clicked.connect(lambda: self.open_file_info(MainWindow))
+        self.btn_FileInfo.clicked.connect(lambda: self.open_file_info(MainWindow))  # type: ignore
 
         self.horizontalLayout_2.addWidget(self.btn_FileInfo)
 
         self.btn_FileDownload = QPushButton(self.centralwidget)
         self.btn_FileDownload.setObjectName("pushButton_4")
         self.btn_FileDownload.setEnabled(True)
-        self.btn_FileDownload.clicked.connect(self.download_files)
+        self.btn_FileDownload.clicked.connect(self.download_files)  # type: ignore
 
         self.horizontalLayout_2.addWidget(self.btn_FileDownload)
 
@@ -1803,7 +1814,7 @@ class Ui_DrizzleMainWindow(QWidget):
 
         self.Users = QVBoxLayout()
         self.Users.setObjectName("Users")
-        self.Users.setSizeConstraint(QLayout.SetDefaultConstraint)
+        self.Users.setSizeConstraint(QLayout.SetDefaultConstraint)  # type: ignore
         self.label_2 = QLabel(self.centralwidget)
         self.label_2.setObjectName("label_2")
 
@@ -1811,12 +1822,12 @@ class Ui_DrizzleMainWindow(QWidget):
 
         self.lw_OnlineStatus = QListWidget(self.centralwidget)
         self.lw_OnlineStatus.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.lw_OnlineStatus.itemSelectionChanged.connect(self.on_user_selection_changed)
+        self.lw_OnlineStatus.itemSelectionChanged.connect(self.on_user_selection_changed)  # type: ignore
         self.icon_Online = QIcon()
-        self.icon_Online.addFile("ui/res/earth.png", QSize(), QIcon.Normal, QIcon.Off)
+        self.icon_Online.addFile("ui/res/earth.png", QSize(), QIcon.Normal, QIcon.Off)  # type: ignore
 
         self.icon_Offline = QIcon()
-        self.icon_Offline.addFile("ui/res/web-off.png", QSize(), QIcon.Normal, QIcon.Off)
+        self.icon_Offline.addFile("ui/res/web-off.png", QSize(), QIcon.Normal, QIcon.Off)  # type: ignore
 
         self.lw_OnlineStatus.setObjectName("listWidget")
         self.lw_OnlineStatus.setSortingEnabled(False)
@@ -1831,13 +1842,13 @@ class Ui_DrizzleMainWindow(QWidget):
         sizePolicy2.setHeightForWidth(self.txtedit_MessagesArea.sizePolicy().hasHeightForWidth())
         self.txtedit_MessagesArea.setSizePolicy(sizePolicy2)
         self.txtedit_MessagesArea.setMinimumSize(QSize(0, 0))
-        self.txtedit_MessagesArea.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.txtedit_MessagesArea.setTextInteractionFlags(Qt.TextSelectableByMouse)  # type: ignore
 
         self.Users.addWidget(self.txtedit_MessagesArea)
 
         self.horizontalLayout = QHBoxLayout()
         self.horizontalLayout.setObjectName("horizontalLayout")
-        self.horizontalLayout.setSizeConstraint(QLayout.SetDefaultConstraint)
+        self.horizontalLayout.setSizeConstraint(QLayout.SetDefaultConstraint)  # type: ignore
 
         self.txtedit_MessageInput = QPlainTextEdit(self.centralwidget)
         self.txtedit_MessageInput.setObjectName("plainTextEdit")
@@ -1865,7 +1876,7 @@ class Ui_DrizzleMainWindow(QWidget):
         sizePolicy4.setVerticalStretch(0)
         sizePolicy4.setHeightForWidth(self.btn_SendMessage.sizePolicy().hasHeightForWidth())
         self.btn_SendMessage.setSizePolicy(sizePolicy4)
-        self.btn_SendMessage.clicked.connect(self.send_message)
+        self.btn_SendMessage.clicked.connect(self.send_message)  # type: ignore
 
         self.verticalLayout_6.addWidget(self.btn_SendMessage)
 
@@ -1874,7 +1885,7 @@ class Ui_DrizzleMainWindow(QWidget):
         sizePolicy4.setHeightForWidth(self.btn_SendFile.sizePolicy().hasHeightForWidth())
         self.btn_SendFile.setSizePolicy(sizePolicy4)
         self.btn_SendFile.setEnabled(False)
-        self.btn_SendFile.clicked.connect(self.share_file)
+        self.btn_SendFile.clicked.connect(self.share_file)  # type: ignore
 
         self.verticalLayout_6.addWidget(self.btn_SendFile)
 
@@ -1912,7 +1923,7 @@ class Ui_DrizzleMainWindow(QWidget):
         self.scrollContents_FileProgress.setGeometry(QRect(0, 0, 831, 328))
         self.vBoxLayout_ScrollContents = QVBoxLayout(self.scrollContents_FileProgress)
         self.vBoxLayout_ScrollContents.setObjectName("verticalLayout_5")
-        self.vBoxLayout_ScrollContents.setAlignment(Qt.AlignTop)
+        self.vBoxLayout_ScrollContents.setAlignment(Qt.AlignTop)  # type: ignore
 
         self.scroll_FileProgress.setWidget(self.scrollContents_FileProgress)
 
@@ -1926,7 +1937,7 @@ class Ui_DrizzleMainWindow(QWidget):
 
         QMetaObject.connectSlotsByName(MainWindow)
 
-    def retranslateUi(self, MainWindow: MainWindow) -> None:
+    def retranslateUi(self, MainWindow) -> None:
         """Method to show initial content on the UI.
 
         Sets base text on labels and buttons.
@@ -1946,8 +1957,8 @@ class Ui_DrizzleMainWindow(QWidget):
         self.btn_Settings.setText(QCoreApplication.translate("MainWindow", "Settings", None))
         self.label_BrowseFiles.setText(QCoreApplication.translate("MainWindow", "Browse Files", None))
 
-        self.btn_GlobalSearch.clicked.connect(lambda: self.open_global_search(MainWindow))
-        self.btn_Settings.clicked.connect(lambda: self.open_settings(MainWindow))
+        self.btn_GlobalSearch.clicked.connect(lambda: self.open_global_search(MainWindow))  # type: ignore
+        self.btn_Settings.clicked.connect(lambda: self.open_settings(MainWindow))  # type: ignore
 
         __sortingEnabled = self.file_tree.isSortingEnabled()
         self.file_tree.setSortingEnabled(__sortingEnabled)
@@ -1967,7 +1978,7 @@ class Ui_DrizzleMainWindow(QWidget):
         self.label_12.setText(QCoreApplication.translate("MainWindow", "Downloading:", None))
         self.btn_RefreshFileTree.setText(QCoreApplication.translate("MainWindow", "⟳", None))
 
-    def open_settings(self, MainWindow: MainWindow) -> None:
+    def open_settings(self, MainWindow) -> None:
         """Slot function to launch the user settings dialog
 
         Called by the clicked signal of the settings button.
@@ -1982,7 +1993,7 @@ class Ui_DrizzleMainWindow(QWidget):
         settings_dialog.ui = Ui_SettingsDialog(settings_dialog, self.user_settings)
         settings_dialog.exec()
 
-    def open_file_info(self, MainWindow: MainWindow) -> None:
+    def open_file_info(self, MainWindow) -> None:
         """Slot function to launch the file information dialog for a global selected item.
 
         Called by the clicked signal of the file info button.
@@ -2063,11 +2074,11 @@ class Ui_DrizzleMainWindow(QWidget):
         self.send_file_thread = QThread()
         self.send_file_worker = SendFileWorker(Path(filepath))
         self.send_file_worker.moveToThread(self.send_file_thread)
-        self.send_file_thread.started.connect(self.send_file_worker.run)
+        self.send_file_thread.started.connect(self.send_file_worker.run)  # type: ignore
         self.send_file_worker.sending_file.connect(self.messages_controller)
         self.send_file_worker.completed.connect(self.send_file_thread.quit)
         self.send_file_worker.completed.connect(self.send_file_worker.deleteLater)
-        self.send_file_thread.finished.connect(self.send_file_thread.deleteLater)
+        self.send_file_thread.finished.connect(self.send_file_thread.deleteLater)  # type: ignore
 
         self.send_file_thread.start()
 
@@ -2278,9 +2289,9 @@ class Ui_DrizzleMainWindow(QWidget):
         btn_Accept = message_box.addButton(QMessageBox.Yes)
         btn_Reject = message_box.addButton(QMessageBox.No)
         # If user accepts file
-        btn_Accept.clicked.connect(lambda: self.direct_transfer_accept(metadata, username, peer_socket))
+        btn_Accept.clicked.connect(lambda: self.direct_transfer_accept(metadata, username, peer_socket))  # type: ignore
         # If user rejects file
-        btn_Reject.clicked.connect(lambda: self.direct_transfer_reject(peer_socket))
+        btn_Reject.clicked.connect(lambda: self.direct_transfer_reject(peer_socket))  # type: ignore
         message_box.exec()
 
     def direct_transfer_accept(self, metadata: FileMetadata, sender: str, peer_socket: socket.socket) -> None:
@@ -2335,7 +2346,7 @@ class Ui_DrizzleMainWindow(QWidget):
         rejection_header = f"{HeaderCode.DIRECT_TRANSFER_REQUEST}{len(rejection):<{HEADER_MSG_LEN}}".encode(FMT)
         peer_socket.send(rejection_header + rejection)
 
-    def open_global_search(self, MainWindow: MainWindow) -> None:
+    def open_global_search(self, MainWindow) -> None:
         """Slot function to open the file search dialog.
 
         Parameters
@@ -2375,5 +2386,5 @@ class Ui_DrizzleMainWindow(QWidget):
         items = self.lw_OnlineStatus.selectedItems()
         if len(items):
             item = items[0]
-            username: str = item.data(Qt.UserRole)
+            username: str = item.data(Qt.UserRole)  # type: ignore
             selected_uname = username

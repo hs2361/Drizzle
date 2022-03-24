@@ -23,18 +23,17 @@ from ui.DrizzleMainWindow import Ui_DrizzleMainWindow
 
 # Imports (utilities)
 sys.path.append("../")
-from client.app import MainWindow
 from utils.constants import USER_SETTINGS_PATH
 
 
 class Ui_BasicConfigWindow(QWidget):
     """The basic configuration window shown to the user to enter server IP and share path"""
 
-    def __init__(self, MainWindow: MainWindow):
+    def __init__(self, MainWindow):
         super(Ui_BasicConfigWindow, self).__init__()
         self.setupUi(MainWindow)
 
-    def setupUi(self, MainWindow: MainWindow) -> None:
+    def setupUi(self, MainWindow) -> None:
         if not MainWindow.objectName():
             MainWindow.setObjectName("InitialSettingsWindow")
         MainWindow.resize(422, 299)
@@ -97,7 +96,7 @@ class Ui_BasicConfigWindow(QWidget):
 
         QMetaObject.connectSlotsByName(MainWindow)
 
-    def retranslateUi(self, MainWindow: MainWindow) -> None:
+    def retranslateUi(self, MainWindow) -> None:
         MainWindow.setWindowTitle(QCoreApplication.translate("InitialSettingsWindow", "Basic Details", None))
         self.label.setText(QCoreApplication.translate("InitialSettingsWindow", "Server IP", None))
         self.le_serverIp.setPlaceholderText(
@@ -110,7 +109,7 @@ class Ui_BasicConfigWindow(QWidget):
         self.btn_SelectSharePath.setText(QCoreApplication.translate("InitialSettingsWindow", "Open", None))
         self.btn_submit.setText(QCoreApplication.translate("InitialSettingsWindow", "Continue", None))
 
-    def on_submit(self, MainWindow: MainWindow) -> None:
+    def on_submit(self, MainWindow) -> None:
         """Loads the entered values into the settings and stores them in the settings.json file
 
         Parameters

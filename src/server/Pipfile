@@ -6,9 +6,7 @@ name = "pypi"
 [packages]
 msgpack = "*"
 tinydb = "*"
-prompt-toolkit = "*"
 fuzzysearch = "*"
-thefuzz = "*"
 
 [dev-packages]
 pre-commit = "*"

@@ -6,7 +6,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from pprint import pprint
+from pprint import pformat
 
 # Imports (PyPI)
 import msgpack
@@ -57,7 +57,7 @@ uname_to_ip: dict[str, str] = {}
 # To lookup username of a given IP
 ip_to_uname: dict[str, str] = {}
 # Mapping from username to last seen timestamp
-uname_to_status: dict[str, int] = {}
+uname_to_status: dict[str, float] = {}
 
 
 def receive_msg(client_socket: socket.socket) -> SocketMessage:
@@ -207,9 +207,9 @@ def read_handler(notified_socket: socket.socket) -> None:
                         if response_data != notified_socket.getpeername()[0]:
                             logging.debug(msg=f"Valid request: {response_data}")
                             # Send the IP back to the user
-                            data = response_data.encode(FMT)
-                            header = f"{HeaderCode.REQUEST_IP.value}{len(data):<{HEADER_MSG_LEN}}".encode(FMT)
-                            notified_socket.send(header + data)
+                            ip_data = response_data.encode(FMT)
+                            header = f"{HeaderCode.REQUEST_IP.value}{len(ip_data):<{HEADER_MSG_LEN}}".encode(FMT)
+                            notified_socket.send(header + ip_data)
                         else:
                             raise RequestException(
                                 msg="Cannot query for your own address",
@@ -356,7 +356,7 @@ def read_handler(notified_socket: socket.socket) -> None:
                             # Search through the user's share data
                             dir: list[DirData] = user["share"]
                             item_search(dir, result, search_query.lower(), user["uname"])
-                        logging.debug(f"{pprint(result)}")
+                        logging.debug(f"{pformat(result)}")
 
                         # Send search results back to the user
                         search_result_bytes = msgpack.packb(result)
@@ -379,9 +379,9 @@ def read_handler(notified_socket: socket.socket) -> None:
                         uname_to_status[username] = time.time()
                         # Return the last seen status of all users except the current user
                         filtered_status = {k: v for k, v in uname_to_status.items() if k != username}
-                        data = msgpack.packb(filtered_status)
-                        header = f"{HeaderCode.HEARTBEAT_REQUEST.value}{len(data):<{HEADER_MSG_LEN}}".encode(FMT)
-                        notified_socket.sendall(header + data)
+                        status_data = msgpack.packb(filtered_status)
+                        header = f"{HeaderCode.HEARTBEAT_REQUEST.value}{len(status_data):<{HEADER_MSG_LEN}}".encode(FMT)
+                        notified_socket.sendall(header + status_data)
                     else:
                         raise RequestException(
                             msg=f"Username does not exist",
@@ -407,7 +407,7 @@ def read_handler(notified_socket: socket.socket) -> None:
                 # Remove the socket from the list of connected sockets
                 sockets_list.remove(notified_socket)
                 # Remove the user from the lookup mappings
-                addr_to_remove: str = notified_socket.getpeername()[0]
+                addr_to_remove = notified_socket.getpeername()[0]
                 uname = ip_to_uname.pop(addr_to_remove, None)
                 uname_to_ip.pop(uname, None)
             except ValueError:
@@ -420,16 +420,16 @@ def read_handler(notified_socket: socket.socket) -> None:
                 try:
                     # Remove the socket from the list of connected sockets
                     sockets_list.remove(notified_socket)
-                    addr_to_remove: str = notified_socket.getpeername()[0]
+                    addr_to_remove = notified_socket.getpeername()[0]
                     uname = ip_to_uname.pop(addr_to_remove, None)
                     uname_to_ip.pop(uname, None)
                 except ValueError:
                     logging.info("already removed")
             else:
                 # Encode and send the error back to the user
-                data = msgpack.packb(e, default=RequestException.to_dict, use_bin_type=True)
-                header = f"{HeaderCode.ERROR.value}{len(data):<{HEADER_MSG_LEN}}".encode(FMT)
-                notified_socket.send(header + data)
+                exc_data = msgpack.packb(e, default=RequestException.to_dict, use_bin_type=True)
+                header = f"{HeaderCode.ERROR.value}{len(exc_data):<{HEADER_MSG_LEN}}".encode(FMT)
+                notified_socket.send(header + exc_data)
             logging.exception(msg=f"Exception: {e.msg}")
             return
         except Exception as e:

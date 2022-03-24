@@ -64,7 +64,7 @@ class Ui_SettingsDialog(QDialog):
         self.label = QLabel(Dialog)
         self.label.setObjectName("label")
 
-        self.formLayout.setWidget(0, QFormLayout.LabelRole, self.label)
+        self.formLayout.setWidget(0, QFormLayout.LabelRole, self.label)  # type: ignore
 
         self.horizontalLayout = QHBoxLayout()
         self.horizontalLayout.setObjectName("horizontalLayout")
@@ -75,16 +75,16 @@ class Ui_SettingsDialog(QDialog):
 
         self.btn_SelectShare = QPushButton(Dialog)
         self.btn_SelectShare.setObjectName("pushButton")
-        self.btn_SelectShare.clicked.connect(lambda: self.open_dir_picker(True))
+        self.btn_SelectShare.clicked.connect(lambda: self.open_dir_picker(True))  # type: ignore
 
         self.horizontalLayout.addWidget(self.btn_SelectShare)
 
-        self.formLayout.setLayout(0, QFormLayout.FieldRole, self.horizontalLayout)
+        self.formLayout.setLayout(0, QFormLayout.FieldRole, self.horizontalLayout)  # type: ignore
 
         self.label_2 = QLabel(Dialog)
         self.label_2.setObjectName("label_2")
 
-        self.formLayout.setWidget(1, QFormLayout.LabelRole, self.label_2)
+        self.formLayout.setWidget(1, QFormLayout.LabelRole, self.label_2)  # type: ignore
 
         self.horizontalLayout_2 = QHBoxLayout()
         self.horizontalLayout_2.setObjectName("horizontalLayout_2")
@@ -95,39 +95,39 @@ class Ui_SettingsDialog(QDialog):
 
         self.btn_SelectDownload = QPushButton(Dialog)
         self.btn_SelectDownload.setObjectName("pushButton_2")
-        self.btn_SelectDownload.clicked.connect(lambda: self.open_dir_picker(False))
+        self.btn_SelectDownload.clicked.connect(lambda: self.open_dir_picker(False))  # type: ignore
 
         self.horizontalLayout_2.addWidget(self.btn_SelectDownload)
 
-        self.formLayout.setLayout(1, QFormLayout.FieldRole, self.horizontalLayout_2)
+        self.formLayout.setLayout(1, QFormLayout.FieldRole, self.horizontalLayout_2)  # type: ignore
 
         self.label_3 = QLabel(Dialog)
         self.label_3.setObjectName("label_3")
 
-        self.formLayout.setWidget(2, QFormLayout.LabelRole, self.label_3)
+        self.formLayout.setWidget(2, QFormLayout.LabelRole, self.label_3)  # type: ignore
 
         self.le_Username = QLineEdit(Dialog)
         self.le_Username.setObjectName("lineEdit_3")
 
-        self.formLayout.setWidget(2, QFormLayout.FieldRole, self.le_Username)
+        self.formLayout.setWidget(2, QFormLayout.FieldRole, self.le_Username)  # type: ignore
 
         self.le_ServerIP = QLineEdit(Dialog)
         self.le_ServerIP.setObjectName("lineEdit_4")
 
-        self.formLayout.setWidget(3, QFormLayout.FieldRole, self.le_ServerIP)
+        self.formLayout.setWidget(3, QFormLayout.FieldRole, self.le_ServerIP)  # type: ignore
 
         self.label_4 = QLabel(Dialog)
         self.label_4.setObjectName("label_4")
 
-        self.formLayout.setWidget(3, QFormLayout.LabelRole, self.label_4)
+        self.formLayout.setWidget(3, QFormLayout.LabelRole, self.label_4)  # type: ignore
 
         self.toggle = QCheckBox(Dialog)
-        self.formLayout.setWidget(4, QFormLayout.FieldRole, self.toggle)
+        self.formLayout.setWidget(4, QFormLayout.FieldRole, self.toggle)  # type: ignore
 
         self.label_5 = QLabel(Dialog)
         self.label_5.setObjectName("label_5")
 
-        self.formLayout.setWidget(4, QFormLayout.LabelRole, self.label_5)
+        self.formLayout.setWidget(4, QFormLayout.LabelRole, self.label_5)  # type: ignore
 
         self.formLayout.setSpacing(10)
 
@@ -176,8 +176,8 @@ class Ui_SettingsDialog(QDialog):
 
         self.label_5.setText(QCoreApplication.translate("Dialog", "Show Desktop Notifications", None))
 
-        self.btn_Apply.clicked.connect(lambda: self.apply_settings(Dialog))
-        self.btn_Cancel.clicked.connect(Dialog.close)
+        self.btn_Apply.clicked.connect(lambda: self.apply_settings(Dialog))  # type: ignore
+        self.btn_Cancel.clicked.connect(Dialog.close)  # type: ignore
         self.toggle.setChecked(self.settings["show_notifications"])
 
     def apply_settings(self, Dialog) -> None:
@@ -207,7 +207,7 @@ class Ui_SettingsDialog(QDialog):
             message_box.setText("New settings will be applied after restart")
             message_box.addButton(QMessageBox.Close)
             btn_restart = message_box.addButton("Restart Now", QMessageBox.NoRole)
-            btn_restart.clicked.connect(lambda: os.execl(sys.executable, sys.executable, *sys.argv))
+            btn_restart.clicked.connect(lambda: os.execl(sys.executable, sys.executable, *sys.argv))  # type: ignore
             message_box.exec()
 
         self.settings = new_settings

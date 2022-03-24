@@ -1,8 +1,6 @@
 from enum import Enum
 from typing import NamedTuple, TypedDict
 
-from PyQt5.QtCore import QMutex
-
 
 # Communication header codes for Drizzle's protocol
 class HeaderCode(Enum):
@@ -42,14 +40,6 @@ class TransferProgress(TypedDict):
     status: TransferStatus
     progress: int
     percent_progress: float
-
-
-# Directory progress information
-class DirProgress(TypedDict):
-    mutex: QMutex | None
-    current: int
-    total: int
-    status: TransferStatus
 
 
 # Metadata for progress widgets

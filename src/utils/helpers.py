@@ -5,8 +5,6 @@ import os
 import re
 from pathlib import Path
 
-from fuzzysearch import find_near_matches
-
 from utils.constants import HASH_BUFFER_LEN, TEMP_FOLDER_PATH  # MESSAGE_MAX_LEN,
 from utils.types import CompressionMethod, DirData, ItemSearchResult, Message, TransferProgress, TransferStatus
 
@@ -110,6 +108,8 @@ def item_search(dir: list[DirData] | None, items: list[ItemSearchResult], search
         Username of the owner of given [dir]
 
     """
+    from fuzzysearch import find_near_matches
+
     if dir is None:
         return
     for item in dir:
