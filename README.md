@@ -1,6 +1,6 @@
 # Drizzle
 
-*Drizzle is a lightweight file-sharing and messaging platform inspired by DC++.*\
+_Drizzle is a lightweight file-sharing and messaging platform inspired by DC++._\
 [See the feature list](https://github.com/hs2361/Drizzle/edit/gui/README.md#features)
 
 [Demonstration Video (file)](./docs/media/Drizzle_Final.mp4)
@@ -9,15 +9,15 @@ https://user-images.githubusercontent.com/56076061/154854653-22287ddf-0cdd-4334-
 
 ## The Team
 
-- [Harsh Sharma](https://github.com/hs2361)
-- [Aaryak Shah](https://github.com/aaryak-shah)
-- [Anirudh Gautam](https://github.com/gautamanirudh)
+-   [Harsh Sharma](https://github.com/hs2361)
+-   [Aaryak Shah](https://github.com/aaryak-shah)
+-   [Anirudh Gautam](https://github.com/gautamanirudh)
 
 ## Technologies Used
 
-- Python
-- Sockets
-- Qt Framework
+-   Python
+-   Sockets
+-   Qt Framework
 
 ## Thoughts Behind the Project
 
@@ -78,26 +78,21 @@ cd Drizzle
 
 ### Dependencies
 
-- python &geq; 3.10
-- pyqt5
-- msgpack
-- tinydb [server]
-- fuzzysearch [server]
-- notify-py [client]
+-   python &geq; 3.10
+-   pyqt5
+-   msgpack
+-   tinydb [server]
+-   fuzzysearch [server]
+-   notify-py [client]
 
 ### Server Setup
 
 The server needs to be run on only one computer on the network.
 
 ```sh
-# create necessary folders
-mkdir ~/.Drizzle/db ~/.Drizzle/logs
-```
-
-```sh
-cd src/server
-python server.py
-# ensure that python is using version 3.10 or higher
+cd src
+python -m server.server
+# ensure that Python version is 3.10 or higher
 ```
 
 The server will display a line on startup with the IP assigned to it. Use this IP when starting new clients on the network.
@@ -158,10 +153,10 @@ pipenv run python app.py
 
 You may notice some problems when using peers running Windows or OS-X. Some known issues are:
 
-- Pause/Resume is not supported
-- Glitched UI components on OS-X
-- Symlink imports need admin on Windows
-- Potential for unpredictable behaviour
+-   Pause/Resume is not supported
+-   Glitched UI components on OS-X
+-   Symlink imports need admin on Windows
+-   Potential for unpredictable behaviour
 
 ## Architecture
 
@@ -177,22 +172,22 @@ The server does not have any other responsibilities as the other functionality i
 
 A client-server communication happens for the following usecases:
 
-- Register username with server (on client startup)
-- Update client's share folder data on server
-- Request an IP against a known username
-- Request a username against a known IP
-- Obtain share folder data for a user
-- Get file search results for the network
-- Update file hashes on server
+-   Register username with server (on client startup)
+-   Update client's share folder data on server
+-   Request an IP against a known username
+-   Request a username against a known IP
+-   Obtain share folder data for a user
+-   Get file search results for the network
+-   Update file hashes on server
 
 ### Peer-To-Peer Communication
 
 Peers on the network discover each other (in terms of usernames and IPs) through the server. Once this data is received, however, peer-to-peer connections can be established as and when required. Thus, many of the succeeding functionalities are handled directly between the peers:
 
-- Requesting files and folders
-- Pause/Resume
-- Sending files
-- Private messaging
+-   Requesting files and folders
+-   Pause/Resume
+-   Sending files
+-   Private messaging
 
 ## Screenshots
 

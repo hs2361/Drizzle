@@ -13,7 +13,6 @@ import msgpack
 from tinydb import Query, TinyDB
 
 # Imports (utilities)
-sys.path.append("../")
 from utils.constants import FMT, HEADER_MSG_LEN, HEADER_TYPE_LEN, SERVER_RECV_PORT
 from utils.exceptions import ExceptionCode, RequestException
 from utils.helpers import item_search, update_file_hash
@@ -22,6 +21,11 @@ from utils.types import DBData, DirData, HeaderCode, ItemSearchResult, SocketMes
 
 # Get the server IP
 IP = get_self_ip()
+
+app_dir = Path.home() / ".Drizzle"
+app_dir.mkdir(exist_ok=True)
+(app_dir / "logs").mkdir(exist_ok=True)
+(app_dir / "db").mkdir(exist_ok=True)
 
 # Logging configuration
 logging.basicConfig(

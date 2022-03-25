@@ -10,6 +10,9 @@ __pycache__/
 
 # Distribution / packaging
 .Python
+.flatpak-builder/
+flatpak-pip-generator
+requirements.txt
 build/
 develop-eggs/
 dist/

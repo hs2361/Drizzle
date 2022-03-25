@@ -1,0 +1,24 @@
+app-id: com.github.hs2361.Drizzle.Server
+runtime: org.freedesktop.Platform
+runtime-version: "21.08"
+sdk: org.freedesktop.Sdk
+command: server.sh
+finish-args:
+  - "--share=network"
+  - "--filesystem=home"
+modules:
+  - dependencies.json
+  - name: runner
+    buildsystem: simple
+    sources:
+      - type: file
+        path: server.py
+      - type: file
+        path: server.sh
+      - type: dir
+        path: "../utils"
+        dest: utils
+    build-commands:
+      - install -D server.sh /app/bin/server.sh
+      - install -D server.py /app/bin/server/server.py
+      - cp -R utils /app/bin/utils
