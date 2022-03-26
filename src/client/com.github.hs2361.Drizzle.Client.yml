@@ -1,0 +1,29 @@
+app-id: com.github.hs2361.Drizzle.Client
+runtime: org.freedesktop.Platform
+runtime-version: "21.08"
+sdk: org.freedesktop.Sdk
+command: client.sh
+finish-args:
+  - "--share=network"
+  - "--filesystem=home"
+  - "--socket=x11"
+modules:
+  - dependencies.json
+  - name: runner
+    buildsystem: simple
+    sources:
+      - type: file
+        path: app.py
+      - type: file
+        path: client.sh
+      - type: dir
+        path: ui
+        dest: ui
+      - type: dir
+        path: "../utils"
+        dest: utils
+    build-commands:
+      - install -D client.sh /app/bin/client.sh
+      - install -D app.py /app/bin/client/app.py
+      - cp -R ui /app/bin/client/ui
+      - cp -R utils /app/bin/utils

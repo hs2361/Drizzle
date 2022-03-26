@@ -2006,22 +2006,23 @@ class Ui_DrizzleMainWindow(QWidget):
 
         global selected_file_items
         global selected_uname
-        selected_item = selected_file_items[0]
-        size = selected_item["size"]
-        filedata = {
-            "name": selected_item["name"],
-            "hash": selected_item["hash"] or "Not available",
-            "type": selected_item["type"],
-            "size": convert_size(size or 0),
-            "owner": selected_uname,
-        }
-        if selected_item["type"] != "file":
-            size, count = get_directory_size(selected_item, 0, 0)
-            filedata["size"] = convert_size(size)
-            filedata["count"] = f"{count} files"
-        file_info_dialog = QDialog(MainWindow)
-        file_info_dialog.ui = Ui_FileInfoDialog(file_info_dialog, filedata, self.download_files)
-        file_info_dialog.exec()
+        if selected_file_items:
+            selected_item = selected_file_items[0]
+            size = selected_item["size"]
+            filedata = {
+                "name": selected_item["name"],
+                "hash": selected_item["hash"] or "Not available",
+                "type": selected_item["type"],
+                "size": convert_size(size or 0),
+                "owner": selected_uname,
+            }
+            if selected_item["type"] != "file":
+                size, count = get_directory_size(selected_item, 0, 0)
+                filedata["size"] = convert_size(size)
+                filedata["count"] = f"{count} files"
+            file_info_dialog = QDialog(MainWindow)
+            file_info_dialog.ui = Ui_FileInfoDialog(file_info_dialog, filedata, self.download_files)
+            file_info_dialog.exec()
 
     def import_files(self) -> None:
         """Slot function to launch a file picker for importing file symlinks.

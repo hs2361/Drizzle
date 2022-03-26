@@ -3,15 +3,17 @@ import json
 import logging
 import socket
 import sys
+from pathlib import Path
 
 # Imports (PyPI)
 from PyQt5.QtWidgets import QApplication, QMainWindow
-from ui.StartWindow import Ui_StartWindow
 
 # Imports (utilities)
-sys.path.append("../")
 from utils.constants import RECV_FOLDER_PATH, SHARE_FOLDER_PATH, USER_SETTINGS_PATH
 from utils.types import UserSettings
+
+sys.path.append("client")
+from ui.StartWindow import Ui_StartWindow
 
 # Constants
 CLIENT_IP = socket.gethostbyname(socket.gethostname())
@@ -77,6 +79,15 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == "__main__":
+    # Create application directories if they don't exist
+    app_dir = Path.home() / ".Drizzle"
+    app_dir.mkdir(exist_ok=True)
+    (app_dir / "logs").mkdir(exist_ok=True)
+    (app_dir / "db").mkdir(exist_ok=True)
+    (app_dir / "share").mkdir(exist_ok=True)
+    (app_dir / "compressed").mkdir(exist_ok=True)
+    (app_dir / "tmp").mkdir(exist_ok=True)
+
     app = QApplication(sys.argv)
 
     window = MainWindow()
