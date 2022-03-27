@@ -16,6 +16,8 @@ modules:
         path: app.py
       - type: file
         path: client.sh
+      - type: file
+        path: com.github.hs2361.Drizzle.Client.desktop
       - type: dir
         path: ui
         dest: ui
@@ -27,3 +29,4 @@ modules:
       - install -D app.py /app/bin/client/app.py
       - cp -R ui /app/bin/client/ui
       - cp -R utils /app/bin/utils
+      - install -D com.github.hs2361.Drizzle.Client.desktop /app/share/applications/com.github.hs2361.Drizzle.Client.desktop

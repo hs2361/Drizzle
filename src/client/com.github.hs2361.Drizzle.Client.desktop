@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Drizzle Client
+Exec=client.sh
+Type=Application
+Comment=A lightweight peer-to-peer file sharing system inspired by DC++
+Terminal=false
+Categories=Network;Utility

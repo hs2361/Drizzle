@@ -15,6 +15,8 @@ modules:
         path: server.py
       - type: file
         path: server.sh
+      - type: file
+        path: com.github.hs2361.Drizzle.Server.desktop
       - type: dir
         path: "../utils"
         dest: utils
@@ -22,3 +24,4 @@ modules:
       - install -D server.sh /app/bin/server.sh
       - install -D server.py /app/bin/server/server.py
       - cp -R utils /app/bin/utils
+      - install -D com.github.hs2361.Drizzle.Server.desktop /app/share/applications/com.github.hs2361.Drizzle.Server.desktop

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Drizzle Server
+Exec=server.sh
+Type=Application
+Comment=Server for Drizzle - A lightweight peer-to-peer file sharing system inspired by DC++
+Terminal=true
+Categories=Network;Utility
