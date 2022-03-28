@@ -6,7 +6,7 @@ name = "pypi"
 [packages]
 msgpack = "*"
 notify-py = "*"
-pyqt5 = "==5.14.1"
+pyqt5 = "==5.15.6"
 
 [dev-packages]
 pre-commit = "*"

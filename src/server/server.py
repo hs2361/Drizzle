@@ -50,6 +50,10 @@ server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 server_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
+# Mark packets with TOS value of IPTOS_THROUGHPUT and IPTOS_LOWDELAY to optimize for throughput and low delay
+server_socket.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, 0x10 | 0x08)
+server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_PRIORITY, 0x06)
+
 # Bind the socket and make it listen for new connections from peers
 server_socket.bind((IP, SERVER_RECV_PORT))
 server_socket.listen(5)
