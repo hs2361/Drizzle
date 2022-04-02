@@ -23,10 +23,12 @@ class Ui_FileProgressWidget(QWidget):
         The path to the file item being downloaded
     total : int
         The total size of the download in bytes
-    pause_signal : pyqtSignal
+    pause_signal : pyqtSignal | None
         A signal that is emitted when the pause button is pressed
-    resume_signal : pyqtSignal
+    resume_signal : pyqtSignal | None
         A signal that is emitted when the resume button is pressed
+    allow_pause : bool
+        Indicates whether the user can pause this download
 
     Methods
     ----------
@@ -47,8 +49,9 @@ class Ui_FileProgressWidget(QWidget):
         Widget,
         item_path: Path,
         total: int,
-        pause_signal: pyqtSignal,
-        resume_signal: pyqtSignal,
+        pause_signal: pyqtSignal | None,
+        resume_signal: pyqtSignal | None,
+        allow_pause: bool = True,
     ):
         super(Ui_FileProgressWidget, self).__init__()
         self.path = item_path
@@ -56,8 +59,9 @@ class Ui_FileProgressWidget(QWidget):
         self.fmt_total = convert_size(total)
         self.pause_signal = pause_signal
         self.resume_signal = resume_signal
-        self.setupUi(Widget, total)
+        self.allow_pause = allow_pause
         self.paused = False
+        self.setupUi(Widget, total)
 
     def update_progress(self, new_val: int) -> None:
         """Updates the progress bar to new_val
@@ -70,7 +74,7 @@ class Ui_FileProgressWidget(QWidget):
 
         converted_size = convert_size(new_val)
         self.progressBar.setFormat(f"{converted_size}/{self.fmt_total}")
-        self.progressBar.setValue(new_val)
+        self.progressBar.setValue(int(10000 * new_val / self.total))
 
     def toggle_download(self):
         """Switches between resuming and pausing the download and emits the resume and pause signals"""
@@ -115,22 +119,22 @@ class Ui_FileProgressWidget(QWidget):
         self.horizontalLayout_2.addWidget(self.label)
 
         self.progressBar = QProgressBar(Widget)
-        self.progressBar.setMaximum(total)
+        self.progressBar.setMaximum(10000)
         self.progressBar.setObjectName("progressBar")
 
         self.horizontalLayout_2.addWidget(self.progressBar)
 
-        self.btn_Toggle = QPushButton(Widget)
-        self.btn_Toggle.setObjectName("pushButton")
-        self.btn_Toggle.clicked.connect(self.toggle_download)  # type: ignore
-        sizePolicy2 = QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        sizePolicy2.setHorizontalStretch(0)
-        sizePolicy2.setVerticalStretch(0)
-        self.btn_Toggle.setSizePolicy(sizePolicy2)
-        self.btn_Toggle.setMinimumSize(QSize(40, 40))
-        self.btn_Toggle.setMaximumSize(QSize(40, 40))
-
-        self.horizontalLayout_2.addWidget(self.btn_Toggle)
+        if self.allow_pause:
+            self.btn_Toggle = QPushButton(Widget)
+            self.btn_Toggle.setObjectName("pushButton")
+            self.btn_Toggle.clicked.connect(self.toggle_download)  # type: ignore
+            sizePolicy2 = QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            sizePolicy2.setHorizontalStretch(0)
+            sizePolicy2.setVerticalStretch(0)
+            self.btn_Toggle.setSizePolicy(sizePolicy2)
+            self.btn_Toggle.setMinimumSize(QSize(40, 40))
+            self.btn_Toggle.setMaximumSize(QSize(40, 40))
+            self.horizontalLayout_2.addWidget(self.btn_Toggle)
 
         self.horizontalLayout.addLayout(self.horizontalLayout_2)
 
@@ -141,4 +145,5 @@ class Ui_FileProgressWidget(QWidget):
     def retranslateUi(self):
         self.label.setText(QCoreApplication.translate("Widget", f"{self.path.name}", None))
         self.label.setToolTip(str(self.path))
-        self.btn_Toggle.setText(QCoreApplication.translate("Widget", "⏸", None))
+        if self.allow_pause:
+            self.btn_Toggle.setText(QCoreApplication.translate("Widget", "⏸", None))
