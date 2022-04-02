@@ -207,7 +207,7 @@ class Ui_SettingsDialog(QDialog):
             message_box.setText("New settings will be applied after restart")
             message_box.addButton(QMessageBox.Close)
             btn_restart = message_box.addButton("Restart Now", QMessageBox.NoRole)
-            btn_restart.clicked.connect(lambda: os.execl(sys.executable, sys.executable, *sys.argv))  # type: ignore
+            btn_restart.clicked.connect(lambda: os.execl(sys.executable, sys.executable, "-m", "client.app"))  # type: ignore
             message_box.exec()
 
         self.settings = new_settings

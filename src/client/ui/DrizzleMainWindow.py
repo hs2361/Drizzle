@@ -1332,7 +1332,7 @@ class Ui_DrizzleMainWindow(QWidget):
             sys.exit(
                 show_error_dialog(
                     f"Could not connect to server: {e}\
-                    Ensure that the server is online and you have entered the correct server IP.",
+                    \nEnsure that the server is online and you have entered the correct server IP.",
                     True,
                 )
             )
@@ -1547,7 +1547,7 @@ class Ui_DrizzleMainWindow(QWidget):
         global self_uname
         # Only start rendering if selected user is sender
         if message["sender"] == selected_uname:
-            self.render_messages(messages_store[selected_uname])
+            self.render_messages(messages_store.get(selected_uname, []))
 
     def render_messages(self, messages_list: list[Message] | None) -> None:
         """Performs the render operation for chat messages.
@@ -1842,10 +1842,10 @@ class Ui_DrizzleMainWindow(QWidget):
         self.lw_OnlineStatus.setSelectionMode(QAbstractItemView.SingleSelection)
         self.lw_OnlineStatus.itemSelectionChanged.connect(self.on_user_selection_changed)  # type: ignore
         self.icon_Online = QIcon()
-        self.icon_Online.addFile("ui/res/earth.png", QSize(), QIcon.Normal, QIcon.Off)  # type: ignore
+        self.icon_Online.addFile("res/earth.png", QSize(), QIcon.Normal, QIcon.Off)  # type: ignore
 
         self.icon_Offline = QIcon()
-        self.icon_Offline.addFile("ui/res/web-off.png", QSize(), QIcon.Normal, QIcon.Off)  # type: ignore
+        self.icon_Offline.addFile("res/web-off.png", QSize(), QIcon.Normal, QIcon.Off)  # type: ignore
 
         self.lw_OnlineStatus.setObjectName("listWidget")
         self.lw_OnlineStatus.setSortingEnabled(False)
